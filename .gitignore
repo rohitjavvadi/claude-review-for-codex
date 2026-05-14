@@ -1,4 +1,5 @@
 .codex/claude-reviews/
+AGENTS.md
 node_modules/
 *.log
 *.tmp

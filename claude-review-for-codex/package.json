@@ -1,6 +1,6 @@
 {
   "name": "claude-review-for-codex",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Codex plugin that asks Claude Code for read-only reviews while Codex remains the writer.",
   "type": "module",
   "author": "Rohit Javvadi",

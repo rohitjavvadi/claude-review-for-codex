@@ -7,7 +7,7 @@ description: "Run a stricter adversarial Claude review focused on security, roll
 
 Resolve `<plugin-root>` as two directories above this `SKILL.md`.
 
-Before running the command, create `.codex/claude-reviews/input/codex-context.md` in the target repository unless the user already passed `--codex-context-file`. Keep it concise and include the user's adversarial focus, Codex's summary of the change, files/commits under review, tests/checks already run, known failure modes, rollback/data-loss/security concerns, and anything Claude should challenge.
+Before running the command, create or overwrite `.codex/claude-reviews/input/codex-context.md` in the target repository unless the user already passed `--codex-context-file`. Always generate fresh context for this run; do not reuse an older QA/review context file. Keep it concise and include the user's adversarial focus, Codex's summary of the change, files/commits under review, tests/checks already run, known failure modes, rollback/data-loss/security concerns, and anything Claude should challenge.
 
 Run:
 

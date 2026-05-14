@@ -35,8 +35,13 @@ test("root install doctor exists", () => {
   const repoRoot = path.dirname(PLUGIN_ROOT);
   const rootDoctor = path.join(repoRoot, "scripts", "doctor.mjs");
   const pluginDoctor = path.join(PLUGIN_ROOT, "scripts", "doctor.mjs");
-  assert.ok(fs.existsSync(rootDoctor));
   assert.ok(fs.existsSync(pluginDoctor));
-  assert.match(fs.readFileSync(rootDoctor, "utf8"), /Codex local marketplace path/);
   assert.match(fs.readFileSync(pluginDoctor, "utf8"), /Codex local marketplace path/);
+  assert.match(fs.readFileSync(pluginDoctor, "utf8"), /installed plugin diagnostics mode/);
+
+  const marketplacePath = path.join(repoRoot, ".agents", "plugins", "marketplace.json");
+  if (fs.existsSync(marketplacePath)) {
+    assert.ok(fs.existsSync(rootDoctor));
+    assert.match(fs.readFileSync(rootDoctor, "utf8"), /Codex local marketplace path/);
+  }
 });

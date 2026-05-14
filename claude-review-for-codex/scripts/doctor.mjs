@@ -8,9 +8,16 @@ const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".
 const repoRoot = findMarketplaceRoot(pluginRoot);
 const marketplacePath = path.join(repoRoot, ".agents", "plugins", "marketplace.json");
 const pluginManifestPath = path.join(pluginRoot, ".codex-plugin", "plugin.json");
+const hasMarketplace = fs.existsSync(marketplacePath);
+const runningFromInstalledPlugin = repoRoot === pluginRoot && !hasMarketplace;
 
 const checks = [
-  checkFile("local marketplace", marketplacePath, repoRoot === pluginRoot ? "clone the GitHub repo root, not only the plugin subfolder" : ""),
+  checkFile(
+    "local marketplace",
+    marketplacePath,
+    !runningFromInstalledPlugin,
+    runningFromInstalledPlugin ? "not present in installed plugin cache; run the root doctor from the cloned GitHub repo for install setup" : "clone the GitHub repo root, not only the plugin subfolder"
+  ),
   checkFile("plugin manifest", pluginManifestPath),
   checkCommand("git", ["--version"], true),
   checkCommand("node", ["--version"], true),
@@ -26,13 +33,22 @@ for (const check of checks) {
 
 console.log("");
 console.log("Codex local marketplace path:");
-console.log(repoRoot === pluginRoot ? "(not found; use the cloned repository root that contains .agents/plugins/marketplace.json)" : repoRoot);
-console.log("");
-console.log("Install in Codex:");
-console.log("1. Open Codex app -> Plugins.");
-console.log("2. Add a local marketplace and paste the path above.");
-console.log("3. Install `claude-review-for-codex`.");
-console.log("4. In a repo chat, run `$cr:setup`, then `$cr:review`.");
+if (runningFromInstalledPlugin) {
+  console.log("(installed plugin diagnostics mode; local marketplace path is available only from the cloned GitHub repo root)");
+  console.log("");
+  console.log("Installed plugin diagnostics:");
+  console.log("1. This plugin package is installed and can run its internal checks.");
+  console.log("2. To install or refresh the local marketplace, run `node scripts/doctor.mjs` from the cloned repository root.");
+  console.log("3. In a repo chat, run `$cr:setup`, then `$cr:review`.");
+} else {
+  console.log(repoRoot);
+  console.log("");
+  console.log("Install in Codex:");
+  console.log("1. Open Codex app -> Plugins.");
+  console.log("2. Add a local marketplace and paste the path above.");
+  console.log("3. Install `claude-review-for-codex`.");
+  console.log("4. In a repo chat, run `$cr:setup`, then `$cr:review`.");
+}
 
 process.exitCode = failedRequired ? 1 : 0;
 
@@ -47,12 +63,12 @@ function findMarketplaceRoot(start) {
   return start;
 }
 
-function checkFile(name, file, missingDetail = "") {
+function checkFile(name, file, required = true, missingDetail = "") {
   const ok = fs.existsSync(file);
   return {
     name,
     ok,
-    required: true,
+    required,
     detail: ok ? path.relative(repoRoot, file) : missingDetail,
   };
 }

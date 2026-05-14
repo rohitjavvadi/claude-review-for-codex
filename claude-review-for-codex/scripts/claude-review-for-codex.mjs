@@ -16,7 +16,7 @@ import { redactText } from "./lib/redaction.mjs";
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const MAX_CODEX_CONTEXT_BYTES = 128 * 1024;
 const PLUGIN_NAME = "claude-review-for-codex";
-const PLUGIN_VERSION = "0.1.0";
+const PLUGIN_VERSION = "0.1.1";
 
 async function main() {
   const [command = "help", ...argv] = process.argv.slice(2);

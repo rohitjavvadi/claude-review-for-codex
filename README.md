@@ -21,7 +21,7 @@ git clone https://github.com/rohitjavvadi/claude-review-for-codex.git
 cd claude-review-for-codex
 ```
 
-2. Run the install doctor:
+2. Run the install doctor from the cloned repository root:
 
 ```bash
 node scripts/doctor.mjs
@@ -43,6 +43,8 @@ $cr:review
 ```
 
 For now, Codex local plugin install still needs that one Plugins UI step. The doctor script checks the repo shape and prints the exact path to paste.
+
+After the plugin is installed into Codex's local cache, the plugin's own `scripts/doctor.mjs` runs in diagnostics mode only. Use the root doctor above when adding or refreshing the local marketplace.
 
 ## Why This Exists
 

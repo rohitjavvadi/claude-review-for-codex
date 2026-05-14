@@ -7,7 +7,7 @@ description: "Run a read-only Claude Code review of the current git diff. Use fo
 
 Resolve `<plugin-root>` as two directories above this `SKILL.md`.
 
-Before running the command, create `.codex/claude-reviews/input/codex-context.md` in the target repository unless the user already passed `--codex-context-file`. Keep it concise and include:
+Before running the command, create or overwrite `.codex/claude-reviews/input/codex-context.md` in the target repository unless the user already passed `--codex-context-file`. Always generate fresh context for this run; do not reuse an older QA/review context file. Keep it concise and include:
 
 - User request and review focus.
 - Codex's understanding of the change.

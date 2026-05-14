@@ -74,13 +74,13 @@ function usage() {
 }
 
 const COMMAND_USAGE = {
-  setup: "Usage: claude-review-for-codex setup [--enable-hooks|--disable-hooks] [--auth-mode subscription-cli|api-key] [--max-budget-usd <amount>|--clear-budget] [--json]",
+  setup: "Usage: claude-review-for-codex setup [--enable-hooks|--disable-hooks] [--add-gitignore] [--auth-mode subscription-cli|api-key] [--max-budget-usd <amount>|--clear-budget] [--json]",
   estimate: "Usage: claude-review-for-codex estimate [--mode cheap|standard|deep|adversarial] [--base <ref>] [--scope working-tree|branch] [--max-turns <n>] [--max-budget-usd <amount>] [--json]",
   review: "Usage: claude-review-for-codex review [--background] [--mode cheap|standard|deep] [--base <ref>] [--scope working-tree|branch] [--codex-context-file <path>] [--model <model>] [--max-turns <n>] [--max-budget-usd <amount>] [--json]",
   "adversarial-review": "Usage: claude-review-for-codex adversarial-review [--background] [--base <ref>] [--scope working-tree|branch] [--codex-context-file <path>] [--model <model>] [--max-turns <n>] [--max-budget-usd <amount>] [--json] [focus text]",
   "review-fix": "Usage: claude-review-for-codex review-fix [--review-id <id>] [--codex-context-file <path>] [review args...] [--json]",
-  verify: "Usage: claude-review-for-codex verify [--review-id <id>|review-id] [--mode cheap|standard|deep] [--codex-context-file <path>] [--model <model>] [--max-turns <n>] [--max-budget-usd <amount>] [--json]",
-  status: "Usage: claude-review-for-codex status [--json]",
+  verify: "Usage: claude-review-for-codex verify [review-id] [--review-id <id>] [--mode cheap|standard|deep] [--codex-context-file <path>] [--model <model>] [--max-turns <n>] [--max-budget-usd <amount>] [--json]",
+  status: "Usage: claude-review-for-codex status [--current-plugin] [--limit <n>] [--json]",
   result: "Usage: claude-review-for-codex result [review-id|job-id] [--json]",
   cancel: "Usage: claude-review-for-codex cancel <job-id> [--json]",
 };
@@ -98,7 +98,7 @@ function parseArgs(argv) {
       continue;
     }
     const key = arg.slice(2);
-    if (["json", "background", "enable-hooks", "disable-hooks", "clear-budget", "help", "h"].includes(key)) {
+    if (["json", "background", "enable-hooks", "disable-hooks", "clear-budget", "add-gitignore", "current-plugin", "help", "h"].includes(key)) {
       options[key] = true;
       continue;
     }
@@ -129,10 +129,12 @@ async function setup(argv) {
   if (options["max-budget-usd"]) updates.maxBudgetUsd = optionalNumber(options["max-budget-usd"], "--max-budget-usd");
   if (options["clear-budget"]) updates.maxBudgetUsd = null;
   const config = saveConfig(repoRoot, updates);
+  const gitignore = options["add-gitignore"] ? addGitignoreEntry(repoRoot) : null;
   const claude = getClaudeStatus(repoRoot);
   const payload = {
     repoRoot,
     config,
+    gitignore,
     claude,
     hooks: {
       enabled: config.hooksEnabled === true,
@@ -159,6 +161,7 @@ function renderSetup(payload) {
     `Default mode: ${payload.config.defaultMode}`,
     `Budget cap: ${payload.config.maxBudgetUsd == null ? "none by default" : `$${payload.config.maxBudgetUsd}`}`,
     `Hooks: ${payload.hooks.enabled ? "enabled" : "disabled"}`,
+    payload.gitignore ? `Git ignore: ${payload.gitignore.message}` : "Git ignore: unchanged. Use setup --add-gitignore to ignore review artifacts.",
     payload.capability_notice,
     payload.billing_notice,
     "",
@@ -357,7 +360,19 @@ async function verify(argv) {
 async function status(argv) {
   const options = parseArgs(argv);
   const repoRoot = repoRootFromCwd();
-  const payload = { jobs: listJobs(repoRoot), reviews: listReviews(repoRoot) };
+  const limit = optionalPositiveInteger(options.limit ?? 10, "--limit");
+  const allReviews = listReviews(repoRoot);
+  const currentReviews = allReviews.filter(isCurrentPluginReview);
+  const legacyReviews = allReviews.filter((review) => !isCurrentPluginReview(review));
+  const payload = {
+    jobs: listJobs(repoRoot),
+    reviews: options["current-plugin"] ? currentReviews : allReviews,
+    currentReviews,
+    legacyReviews,
+    currentPlugin: { name: PLUGIN_NAME, version: PLUGIN_VERSION },
+    filter: options["current-plugin"] ? "current-plugin" : "all",
+    limit,
+  };
   output(payload, options.json, renderStatus(payload));
 }
 
@@ -412,9 +427,19 @@ async function internalRunJob(argv) {
     const config = loadConfig(repoRoot);
     const mode = resolveMode(opts.mode ?? (reviewKind === "adversarial" ? "adversarial" : undefined), config);
     await runReview({ repoRoot, config, mode, options: opts, reviewId, reviewKind });
-    patchJob(repoRoot, jobId, { status: "completed", finishedAt: new Date().toISOString(), exitCode: 0 });
+    const current = readJob(repoRoot, jobId);
+    if (current?.status === "cancel-requested" || current?.status === "cancelled") {
+      patchJob(repoRoot, jobId, { status: "cancelled", finishedAt: new Date().toISOString(), exitCode: null, error: current.error ?? "Cancelled by user." });
+    } else {
+      patchJob(repoRoot, jobId, { status: "completed", finishedAt: new Date().toISOString(), exitCode: 0 });
+    }
   } catch (error) {
-    patchJob(repoRoot, jobId, { status: "failed", finishedAt: new Date().toISOString(), exitCode: 1, error: error.message });
+    const current = readJob(repoRoot, jobId);
+    if (current?.status === "cancel-requested" || current?.status === "cancelled") {
+      patchJob(repoRoot, jobId, { status: "cancelled", finishedAt: new Date().toISOString(), exitCode: null, error: current.error ?? "Cancelled by user." });
+    } else {
+      patchJob(repoRoot, jobId, { status: "failed", finishedAt: new Date().toISOString(), exitCode: 1, error: error.message });
+    }
     process.exitCode = 1;
   }
 }
@@ -470,6 +495,34 @@ function validateScope(scope) {
   if (!["working-tree", "branch"].includes(scope)) {
     throw new Error(`Invalid --scope "${scope}". Use working-tree or branch.`);
   }
+}
+
+function isCurrentPluginReview(review) {
+  return review.summary?.pluginName === PLUGIN_NAME && review.summary?.pluginVersion === PLUGIN_VERSION;
+}
+
+function addGitignoreEntry(repoRoot) {
+  const gitignorePath = path.join(repoRoot, ".gitignore");
+  const desiredEntry = ".codex/claude-reviews/";
+  const broaderEntry = ".codex/";
+  const broaderEntryNoSlash = ".codex";
+  const existing = fs.existsSync(gitignorePath) ? fs.readFileSync(gitignorePath, "utf8") : "";
+  const lines = existing.split(/\r?\n/).map((line) => line.trim());
+  if (lines.includes(desiredEntry) || lines.includes(broaderEntry) || lines.includes(broaderEntryNoSlash)) {
+    return {
+      path: gitignorePath,
+      changed: false,
+      message: `${desiredEntry} already ignored.`,
+    };
+  }
+  const prefix = existing && !existing.endsWith("\n") ? "\n" : "";
+  const comment = existing.includes("# Claude Review for Codex") ? "" : "# Claude Review for Codex artifacts\n";
+  fs.writeFileSync(gitignorePath, `${existing}${prefix}${comment}${desiredEntry}\n`);
+  return {
+    path: gitignorePath,
+    changed: true,
+    message: `Added ${desiredEntry} to .gitignore.`,
+  };
 }
 
 function readOptionalCodexContext(repoRoot, options, config) {

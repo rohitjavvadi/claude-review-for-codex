@@ -24,6 +24,8 @@ test("README documents billing and hook defaults", () => {
   assert.match(readme, /max-budget-usd/);
   assert.match(readme, /Claude is advisory only/);
   assert.match(readme, /Add this to the target repository's `.gitignore`/);
+  assert.match(readme, /\$cr:setup --add-gitignore/);
+  assert.match(readme, /status --current-plugin/);
   assert.match(readme, /Created by `review` and `adversarial-review`/);
   assert.match(readme, /Created by `review-fix`/);
   assert.match(readme, /Created by `verify`/);

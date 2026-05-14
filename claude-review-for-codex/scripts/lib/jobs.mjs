@@ -108,19 +108,27 @@ export function cancelJob(repoRoot, jobId) {
   if (job.status === "cancelled") {
     return job;
   }
+  if (job.status === "cancel-requested") {
+    return reconcileJob(repoRoot, job);
+  }
   if (!job.pid || !["queued", "running"].includes(job.status)) {
     return patchJob(repoRoot, jobId, { status: job.status, error: "Job is not running." });
   }
+  const requested = patchJob(repoRoot, jobId, {
+    status: "cancel-requested",
+    error: "Cancellation requested by user.",
+    cancellationRequestedAt: new Date().toISOString(),
+  });
   try {
-    process.kill(job.pid, "SIGTERM");
-    if (!waitForProcessExit(job.pid, 1500)) {
+    process.kill(requested.pid, "SIGTERM");
+    if (!waitForProcessExit(requested.pid, 1500)) {
       try {
-        process.kill(job.pid, "SIGKILL");
+        process.kill(requested.pid, "SIGKILL");
       } catch (error) {
         if (error?.code !== "ESRCH") throw error;
       }
     }
-    if (waitForProcessExit(job.pid, 1500)) {
+    if (waitForProcessExit(requested.pid, 1500)) {
       return patchJob(repoRoot, jobId, {
         status: "cancelled",
         finishedAt: new Date().toISOString(),
@@ -156,6 +164,15 @@ export function reconcileJob(repoRoot, job) {
   }
   if (job.pid && processExists(job.pid)) {
     return job;
+  }
+  if (job.status === "cancel-requested") {
+    return patchJob(repoRoot, job.id, {
+      status: "cancelled",
+      finishedAt: new Date().toISOString(),
+      exitCode: null,
+      error: job.error ?? "Cancelled by user.",
+      stderrTail: readTail(job.stderrLog),
+    });
   }
   const summaryPath = job.reviewId
     ? path.join(artifactRoot(repoRoot), safeId(job.reviewId), "summary.json")

@@ -14,6 +14,19 @@ test("setup keeps hooks disabled by default", () => {
   assert.equal(payload.config.maxBudgetUsd, null);
 });
 
+test("setup can add review artifacts to gitignore explicitly", () => {
+  const repo = tempRepo("crg-setup-gitignore");
+  const result = runCli(["setup", "--add-gitignore", "--json"], repo);
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.gitignore.changed, true);
+  assert.match(fs.readFileSync(path.join(repo, ".gitignore"), "utf8"), /\.codex\/claude-reviews\//);
+
+  const repeat = runCli(["setup", "--add-gitignore", "--json"], repo);
+  assert.equal(repeat.status, 0, repeat.stderr);
+  assert.equal(JSON.parse(repeat.stdout).gitignore.changed, false);
+});
+
 test("stop hook is no-op by default", () => {
   const repo = tempRepo("crg-hook-default");
   const hook = run(process.execPath, [path.join(PLUGIN_ROOT, "hooks", "stop-review-hook.mjs")], repo);
@@ -26,6 +39,10 @@ test("command help works without requiring a value", () => {
   const result = runCli(["review", "--help"], repo);
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Usage: claude-review-for-codex review/);
+
+  const verify = runCli(["verify", "--help"], repo);
+  assert.equal(verify.status, 0, verify.stderr);
+  assert.match(verify.stdout, /verify \[review-id\] \[--review-id <id>\]/);
 });
 
 test("top-level help includes current review flags", () => {
@@ -283,8 +300,16 @@ test("status rendering marks current and legacy review artifacts", () => {
 
   const status = runCli(["status"], repo);
   assert.equal(status.status, 0, status.stderr);
+  assert.match(status.stdout, /Current Plugin Reviews:/);
+  assert.match(status.stdout, /Legacy\/Unknown Review Artifacts:/);
   assert.match(status.stdout, /current-review: completed \(claude-review-for-codex@0\.1\.0, standard\)/);
   assert.match(status.stdout, /legacy-review: completed \(legacy\/unknown plugin, cheap\)/);
+
+  const filtered = runCli(["status", "--current-plugin", "--json"], repo);
+  assert.equal(filtered.status, 0, filtered.stderr);
+  const payload = JSON.parse(filtered.stdout);
+  assert.deepEqual(payload.reviews.map((review) => review.id), ["current-review"]);
+  assert.equal(payload.legacyReviews.length, 1);
 });
 
 test("status marks dead running jobs as failed", () => {
@@ -407,6 +432,38 @@ test("cancel marks a running background review as cancelled", () => {
   const cancel = runCli(["cancel", job.id, "--json"], repo);
   assert.equal(cancel.status, 0, cancel.stderr);
   assert.equal(JSON.parse(cancel.stdout).status, "cancelled");
+});
+
+test("result does not mark cancel-requested jobs as failed", () => {
+  const repo = tempRepo("crg-cancel-result-race");
+  const jobs = path.join(repo, ".codex", "claude-reviews", "jobs");
+  fs.mkdirSync(jobs, { recursive: true });
+  fs.writeFileSync(path.join(jobs, "cancel-requested.json"), JSON.stringify({
+    id: "cancel-requested",
+    status: "cancel-requested",
+    command: "review",
+    args: [],
+    cwd: repo,
+    reviewId: "review-cancel-requested",
+    createdAt: "2026-05-14T00:00:00.000Z",
+    updatedAt: "2026-05-14T00:00:01.000Z",
+    startedAt: "2026-05-14T00:00:02.000Z",
+    finishedAt: null,
+    pid: 99999999,
+    exitCode: null,
+    error: "Cancellation requested by user.",
+    stdoutLog: null,
+    stderrLog: null,
+    stderrTail: null,
+    lastHeartbeat: null,
+    cancellationRequestedAt: "2026-05-14T00:00:03.000Z"
+  }, null, 2));
+
+  const result = runCli(["result", "cancel-requested", "--json"], repo);
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.status, "cancelled");
+  assert.equal(payload.error, "Cancellation requested by user.");
 });
 
 test("cancel is idempotent for already cancelled jobs", () => {

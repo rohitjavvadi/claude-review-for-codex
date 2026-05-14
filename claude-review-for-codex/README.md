@@ -76,6 +76,12 @@ If the target repo already uses `.codex/` for other checked-in config, ignore on
 .codex/claude-reviews/
 ```
 
+You can also let setup add the narrower ignore entry explicitly:
+
+```text
+$cr:setup --add-gitignore
+```
+
 ## Repository Layout
 
 ```text
@@ -126,6 +132,7 @@ node scripts/claude-review-for-codex.mjs review --model opus
 node scripts/claude-review-for-codex.mjs review --codex-context-file .codex/claude-reviews/input/codex-context.md
 node scripts/claude-review-for-codex.mjs review --background
 node scripts/claude-review-for-codex.mjs status
+node scripts/claude-review-for-codex.mjs status --current-plugin
 node scripts/claude-review-for-codex.mjs result
 ```
 
@@ -218,6 +225,8 @@ Created by `verify`:
 ```
 
 `context.json` is the redacted payload sent to Claude. `raw-output.txt` is Claude's exact review text. `review.md` is the readable review shown to Codex and the user. `summary.json` includes the plugin name and version for new artifacts so older renamed-plugin history can be identified. `decisions.json` records which findings Codex accepted, rejected, or deferred.
+
+`status` groups current plugin reviews separately from legacy or unknown artifacts. Use `status --current-plugin` when old renamed-plugin history makes the list noisy.
 
 ## Review-Fix Workflow
 

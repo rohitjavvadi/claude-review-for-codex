@@ -1,7 +1,7 @@
 {
   "name": "claude-review-for-codex",
   "version": "0.1.0",
-  "description": "Use Claude Code as a read-only Markdown reviewer while Codex remains the only writer and fixer.",
+  "description": "Experimental read-only Claude Code reviews for Codex, with Codex remaining the only writer and fixer.",
   "author": {
     "name": "Rohit Javvadi",
     "url": "https://github.com/rohitjavvadi"
@@ -21,8 +21,8 @@
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Claude Review for Codex",
-    "shortDescription": "Read-only Claude reviews for Codex edits.",
-    "longDescription": "Claude Review for Codex gives Codex a cost-aware second-opinion reviewer. Claude reads bounded review context and returns a human-readable Markdown review; Codex validates findings, records decisions, applies any fixes itself, and can ask Claude to verify the final diff.",
+    "shortDescription": "Experimental read-only Claude reviews for Codex edits.",
+    "longDescription": "Claude Review for Codex is an experimental v0.1 plugin that gives Codex a cost-aware second-opinion reviewer. Claude reads bounded review context and returns a human-readable Markdown review; Codex validates findings, records decisions, applies any fixes itself, and can ask Claude to verify the final diff.",
     "developerName": "Rohit Javvadi",
     "category": "Coding",
     "capabilities": [

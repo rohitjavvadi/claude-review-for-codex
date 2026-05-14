@@ -64,6 +64,9 @@ test("review with fake Claude creates Markdown artifacts", () => {
   assert.ok(fs.existsSync(path.join(payload.artifactDir, "review.md")));
   assert.ok(fs.existsSync(path.join(payload.artifactDir, "raw-output.txt")));
   assert.ok(fs.existsSync(path.join(payload.artifactDir, "summary.json")));
+  const summary = JSON.parse(fs.readFileSync(path.join(payload.artifactDir, "summary.json"), "utf8"));
+  assert.equal(summary.pluginName, "claude-review-for-codex");
+  assert.equal(summary.pluginVersion, "0.1.0");
 });
 
 test("review injects Codex context file into prompt and artifacts", () => {
@@ -256,6 +259,32 @@ test("status lists reviews by summary creation time", () => {
   assert.equal(status.status, 0, status.stderr);
   const payload = JSON.parse(status.stdout);
   assert.deepEqual(payload.reviews.map((review) => review.id), ["qa-newer-custom-name", "review-old-timestamp-name"]);
+});
+
+test("status rendering marks current and legacy review artifacts", () => {
+  const repo = tempRepo("crg-status-render-plugin");
+  const root = path.join(repo, ".codex", "claude-reviews");
+  fs.mkdirSync(path.join(root, "current-review"), { recursive: true });
+  fs.mkdirSync(path.join(root, "legacy-review"), { recursive: true });
+  fs.writeFileSync(path.join(root, "current-review", "summary.json"), JSON.stringify({
+    reviewId: "current-review",
+    pluginName: "claude-review-for-codex",
+    pluginVersion: "0.1.0",
+    status: "completed",
+    mode: "standard",
+    createdAt: "2026-05-14T01:00:00.000Z"
+  }, null, 2));
+  fs.writeFileSync(path.join(root, "legacy-review", "summary.json"), JSON.stringify({
+    reviewId: "legacy-review",
+    status: "completed",
+    mode: "cheap",
+    createdAt: "2026-05-14T00:00:00.000Z"
+  }, null, 2));
+
+  const status = runCli(["status"], repo);
+  assert.equal(status.status, 0, status.stderr);
+  assert.match(status.stdout, /current-review: completed \(claude-review-for-codex@0\.1\.0, standard\)/);
+  assert.match(status.stdout, /legacy-review: completed \(legacy\/unknown plugin, cheap\)/);
 });
 
 test("status marks dead running jobs as failed", () => {

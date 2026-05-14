@@ -1,6 +1,7 @@
 export function renderReview(reviewMarkdown, summary = {}) {
   const metadata = [
     `Review ID: ${summary.reviewId ?? "(unknown)"}`,
+    `Plugin: ${formatPlugin(summary)}`,
     `Mode: ${summary.mode ?? "(unknown)"}`,
     `Artifacts: ${summary.artifactDir ?? "(not saved)"}`,
   ].join("\n");
@@ -17,7 +18,16 @@ export function renderStatus({ jobs, reviews }) {
   lines.push("", "Reviews:");
   if (!reviews.length) lines.push("- none");
   for (const review of reviews.slice(0, 10)) {
-    lines.push(`- ${review.id}: ${review.summary?.status ?? "unknown"} ${review.summary?.mode ? `(${review.summary.mode})` : ""}`);
+    const mode = review.summary?.mode ? `, ${review.summary.mode}` : "";
+    lines.push(`- ${review.id}: ${review.summary?.status ?? "unknown"} (${formatPlugin(review.summary)}${mode})`);
   }
   return `${lines.join("\n")}\n`;
+}
+
+function formatPlugin(summary = {}) {
+  if (summary?.pluginName && summary?.pluginVersion) {
+    return `${summary.pluginName}@${summary.pluginVersion}`;
+  }
+  if (summary?.pluginName) return summary.pluginName;
+  return "legacy/unknown plugin";
 }

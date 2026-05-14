@@ -1,5 +1,7 @@
 # Claude Review for Codex
 
+Experimental v0.1 Codex plugin for asking Claude Code to review code without giving Claude write access.
+
 Claude Review for Codex is a local Codex plugin that lets Codex ask Claude Code for a read-only code review while Codex remains the only agent allowed to edit files.
 
 The plugin is intentionally simple:
@@ -14,6 +16,10 @@ The plugin is intentionally simple:
 
 Codex is excellent at implementing fixes, but a second model can be useful for adversarial review, regression hunting, security checks, migration risk, and test-gap discovery. This plugin gives Codex a Claude reviewer without giving Claude write access.
 
+## Release Status
+
+This is an experimental v0.1 release. The core safety and orchestration paths are covered by tests with fake Claude output, but real Claude review quality depends on the model, prompt, repository context, and account limits. Treat Claude output as advisory evidence, not an automatic gate.
+
 ## Safety Contract
 
 - Claude is advisory only.
@@ -23,6 +29,20 @@ Codex is excellent at implementing fixes, but a second model can be useful for a
 - Hooks are included but disabled by default.
 - No automatic Claude spending happens on install.
 - Review artifacts are saved under `.codex/claude-reviews/`.
+
+## Target Repository Ignore Rule
+
+The plugin writes runtime artifacts into the repository being reviewed under `.codex/claude-reviews/`. Add this to the target repository's `.gitignore` if it is not already ignored:
+
+```gitignore
+.codex/
+```
+
+If the target repo already uses `.codex/` for other checked-in config, ignore only the review artifacts:
+
+```gitignore
+.codex/claude-reviews/
+```
 
 ## Repository Layout
 
@@ -135,22 +155,35 @@ The plugin redacts likely secrets from this file, injects the redacted text into
 
 ## Artifacts
 
-Each review writes durable artifacts:
+Created by `review` and `adversarial-review`:
 
 ```text
 .codex/claude-reviews/<review-id>/
-  codex-context.md
+  codex-context.md              optional, when --codex-context-file is used
   context.json
   prompt.md
   raw-output.txt
   review.md
   summary.json
-  decisions.json
-  verification.md
-  raw-verification-output.txt
 ```
 
-`context.json` is the redacted payload sent to Claude. `raw-output.txt` is Claude's exact review text. `review.md` is the readable review shown to Codex and the user. `decisions.json` records which findings Codex accepted, rejected, or deferred.
+Created by `review-fix`:
+
+```text
+.codex/claude-reviews/<review-id>/
+  decisions.json
+```
+
+Created by `verify`:
+
+```text
+.codex/claude-reviews/<review-id>/
+  raw-verification-output.txt
+  verification-codex-context.md optional, when --codex-context-file is used
+  verification.md
+```
+
+`context.json` is the redacted payload sent to Claude. `raw-output.txt` is Claude's exact review text. `review.md` is the readable review shown to Codex and the user. `summary.json` includes the plugin name and version for new artifacts so older renamed-plugin history can be identified. `decisions.json` records which findings Codex accepted, rejected, or deferred.
 
 ## Review-Fix Workflow
 

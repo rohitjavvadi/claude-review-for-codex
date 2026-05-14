@@ -1,0 +1,44 @@
+{
+  "name": "claude-review-for-codex",
+  "version": "0.1.0",
+  "description": "Use Claude Code as a read-only Markdown reviewer while Codex remains the only writer and fixer.",
+  "author": {
+    "name": "Rohit Javvadi",
+    "url": "https://github.com/rohitjavvadi"
+  },
+  "homepage": "https://github.com/rohitjavvadi/claude-review-for-codex",
+  "repository": "https://github.com/rohitjavvadi/claude-review-for-codex",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "claude",
+    "code-review",
+    "review-gate",
+    "agent"
+  ],
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks.json",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Claude Review for Codex",
+    "shortDescription": "Read-only Claude reviews for Codex edits.",
+    "longDescription": "Claude Review for Codex gives Codex a cost-aware second-opinion reviewer. Claude reads bounded review context and returns a human-readable Markdown review; Codex validates findings, records decisions, applies any fixes itself, and can ask Claude to verify the final diff.",
+    "developerName": "Rohit Javvadi",
+    "category": "Coding",
+    "capabilities": [
+      "Read",
+      "Interactive"
+    ],
+    "websiteURL": "https://github.com/rohitjavvadi/claude-review-for-codex",
+    "privacyPolicyURL": "https://github.com/rohitjavvadi/claude-review-for-codex#privacy-and-billing",
+    "termsOfServiceURL": "https://github.com/rohitjavvadi/claude-review-for-codex#usage",
+    "defaultPrompt": [
+      "Ask Claude to review my diff, then have Codex fix valid findings.",
+      "Run an adversarial Claude review of this change.",
+      "Verify whether the accepted Claude findings are fixed."
+    ],
+    "brandColor": "#F59E0B",
+    "composerIcon": "./assets/icon.png",
+    "logo": "./assets/logo.png"
+  }
+}

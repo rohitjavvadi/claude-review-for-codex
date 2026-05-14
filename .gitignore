@@ -1,0 +1,7 @@
+.codex/claude-reviews/
+node_modules/
+*.log
+*.tmp
+*.temp
+tmp/
+temp/

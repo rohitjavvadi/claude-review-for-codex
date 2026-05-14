@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["review_id", "decisions"],
+  "properties": {
+    "review_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["finding_id", "decision", "reason", "files_changed_by_codex", "tests_run"],
+        "properties": {
+          "finding_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "decision": {
+            "type": "string",
+            "enum": ["accepted", "rejected", "deferred"]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "files_changed_by_codex": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tests_run": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

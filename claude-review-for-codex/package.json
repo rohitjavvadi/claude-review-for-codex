@@ -1,0 +1,33 @@
+{
+  "name": "claude-review-for-codex",
+  "version": "0.1.0",
+  "description": "Codex plugin that asks Claude Code for read-only reviews while Codex remains the writer.",
+  "type": "module",
+  "author": "Rohit Javvadi",
+  "homepage": "https://github.com/rohitjavvadi/claude-review-for-codex",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rohitjavvadi/claude-review-for-codex.git"
+  },
+  "bugs": {
+    "url": "https://github.com/rohitjavvadi/claude-review-for-codex/issues"
+  },
+  "keywords": [
+    "codex",
+    "claude",
+    "code-review",
+    "codex-plugin",
+    "claude-code"
+  ],
+  "bin": {
+    "claude-review-for-codex": "./scripts/claude-review-for-codex.mjs"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "check": "node --test tests/*.test.mjs"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  }
+}

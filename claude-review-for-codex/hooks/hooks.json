@@ -1,0 +1,30 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$PLUGIN_ROOT/hooks/stop-review-hook.mjs\"",
+            "timeout": 120,
+            "statusMessage": "Checking Claude Review for Codex"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$PLUGIN_ROOT/hooks/unread-result-hook.mjs\"",
+            "timeout": 15,
+            "statusMessage": "Checking Claude review results"
+          }
+        ]
+      }
+    ]
+  }
+}

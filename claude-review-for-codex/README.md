@@ -12,6 +12,38 @@ The plugin is intentionally simple:
 - Codex validates any findings before acting.
 - Codex records decisions and applies fixes itself.
 
+## Quick Install
+
+1. Clone this repo:
+
+```bash
+git clone https://github.com/rohitjavvadi/claude-review-for-codex.git
+cd claude-review-for-codex
+```
+
+2. Run the install doctor:
+
+```bash
+node scripts/doctor.mjs
+```
+
+3. Copy the printed **Codex local marketplace path**.
+
+4. In the Codex app, open **Plugins**, add a **local marketplace**, paste that path, and install:
+
+```text
+claude-review-for-codex
+```
+
+5. Open any repo in Codex and run:
+
+```text
+$cr:setup
+$cr:review
+```
+
+For now, Codex local plugin install still needs that one Plugins UI step. The doctor script checks the repo shape and prints the exact path to paste.
+
 ## Why This Exists
 
 Codex is excellent at implementing fixes, but a second model can be useful for adversarial review, regression hunting, security checks, migration risk, and test-gap discovery. This plugin gives Codex a Claude reviewer without giving Claude write access.
@@ -58,17 +90,9 @@ claude-review-for-codex/               Plugin root
   tests/                               Node test suite
 ```
 
-## Install Locally In Codex
+## How It Appears In Codex
 
-This repo is set up as a local Codex marketplace. From the repository root, the marketplace entry points at `./claude-review-for-codex`.
-
-After adding the local marketplace in Codex, install:
-
-```text
-claude-review-for-codex
-```
-
-In Codex chats, the plugin appears as:
+After install, the plugin appears in Codex chats as:
 
 ```text
 [@claude-review-for-codex](plugin://claude-review-for-codex@local-claude-review-for-codex)

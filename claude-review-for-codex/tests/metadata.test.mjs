@@ -16,6 +16,9 @@ test("plugin metadata has required paths and no placeholders", () => {
 test("README documents billing and hook defaults", () => {
   const readme = fs.readFileSync(path.join(PLUGIN_ROOT, "README.md"), "utf8");
   assert.match(readme, /Experimental v0\.1/);
+  assert.match(readme, /## Quick Install/);
+  assert.match(readme, /node scripts\/doctor\.mjs/);
+  assert.match(readme, /Codex local marketplace path/);
   assert.match(readme, /June 15, 2026/);
   assert.match(readme, /Hooks are disabled by default/);
   assert.match(readme, /max-budget-usd/);
@@ -24,4 +27,14 @@ test("README documents billing and hook defaults", () => {
   assert.match(readme, /Created by `review` and `adversarial-review`/);
   assert.match(readme, /Created by `review-fix`/);
   assert.match(readme, /Created by `verify`/);
+});
+
+test("root install doctor exists", () => {
+  const repoRoot = path.dirname(PLUGIN_ROOT);
+  const rootDoctor = path.join(repoRoot, "scripts", "doctor.mjs");
+  const pluginDoctor = path.join(PLUGIN_ROOT, "scripts", "doctor.mjs");
+  assert.ok(fs.existsSync(rootDoctor));
+  assert.ok(fs.existsSync(pluginDoctor));
+  assert.match(fs.readFileSync(rootDoctor, "utf8"), /Codex local marketplace path/);
+  assert.match(fs.readFileSync(pluginDoctor, "utf8"), /Codex local marketplace path/);
 });

@@ -128,6 +128,16 @@ Edit, Write, MultiEdit, NotebookEdit, Bash, WebFetch, WebSearch
 
 The runner also uses `--permission-mode dontAsk`, `--no-session-persistence`, and `--disallowedTools` when supported by the installed Claude CLI.
 
+## Repository Instructions
+
+The context collector automatically includes bounded, redacted repository instruction files when present:
+
+- nearest `AGENTS.md` from the review working directory upward
+- Markdown files referenced from that `AGENTS.md`, such as `CLAUDE.md`
+- root Claude instruction files: `CLAUDE.md`, `claude.md`, `.claude/CLAUDE.md`, `.claude/claude.md`
+
+These files are stored in `context.json` under `repo_instructions`. They are included even when unchanged, so Claude sees the repo's review rules without needing the whole repository.
+
 ## Codex Context Injection
 
 The review skills now create a small Codex-authored context file before calling Claude, then pass it with:

@@ -6,6 +6,13 @@ import { redactJson } from "./redaction.mjs";
 const MAX_DIFF_BYTES = 256 * 1024;
 const MAX_UNTRACKED_BYTES = 24 * 1024;
 const MAX_NEARBY_BYTES_PER_FILE = 24 * 1024;
+const MAX_INSTRUCTION_BYTES_PER_FILE = 32 * 1024;
+const CLAUDE_INSTRUCTION_CANDIDATES = [
+  "CLAUDE.md",
+  "claude.md",
+  ".claude/CLAUDE.md",
+  ".claude/claude.md",
+];
 const REVIEW_CONTEXT_EXCLUDE_PATHSPECS = [
   ":(exclude).codex/claude-reviews/**",
   ":(exclude).git/**",
@@ -154,6 +161,116 @@ function readNearbyContext(repoRoot, files) {
   return contexts;
 }
 
+function discoverRepoInstructions(repoRoot, cwd) {
+  const entries = [];
+  const seen = new Set();
+  const seenFileKeys = new Set();
+  const repoRootReal = realPathOrNull(repoRoot) ?? path.resolve(repoRoot);
+
+  function addInstructionFile(absolutePath, source) {
+    const realAbsolutePath = realPathOrNull(absolutePath);
+    if (!realAbsolutePath) return null;
+    let stat;
+    try {
+      stat = fs.lstatSync(realAbsolutePath);
+    } catch {
+      return null;
+    }
+    const fileKey = `${stat.dev}:${stat.ino}`;
+    if (seenFileKeys.has(fileKey)) return null;
+    const relative = normalizeGitPath(path.relative(repoRootReal, realAbsolutePath));
+    if (!relative || relative.startsWith("..") || path.isAbsolute(relative) || seen.has(relative)) return null;
+    seenFileKeys.add(fileKey);
+    seen.add(relative);
+    try {
+      if (!stat.isFile()) {
+        const entry = { path: relative, source, omitted: true, reason: "not a file" };
+        entries.push(entry);
+        return entry;
+      }
+      if (stat.size > MAX_INSTRUCTION_BYTES_PER_FILE) {
+        const entry = { path: relative, source, omitted: true, reason: `larger than ${MAX_INSTRUCTION_BYTES_PER_FILE} bytes` };
+        entries.push(entry);
+        return entry;
+      }
+      const buffer = fs.readFileSync(realAbsolutePath);
+      if (!isProbablyText(buffer)) {
+        const entry = { path: relative, source, omitted: true, reason: "binary" };
+        entries.push(entry);
+        return entry;
+      }
+      const entry = { path: relative, source, omitted: false, content: buffer.toString("utf8") };
+      entries.push(entry);
+      return entry;
+    } catch {
+      return null;
+    }
+  }
+
+  const agents = findNearestAgentsFile(repoRoot, cwd);
+  if (agents) {
+    const agentEntry = addInstructionFile(agents, "nearest AGENTS.md");
+    if (agentEntry?.content) {
+      for (const pointer of findMarkdownPointers(agentEntry.content)) {
+        addInstructionFile(path.resolve(path.dirname(agents), pointer), `referenced by ${agentEntry.path}`);
+      }
+      for (const candidate of CLAUDE_INSTRUCTION_CANDIDATES) {
+        if (agentEntry.content.includes(candidate)) {
+          addInstructionFile(path.resolve(path.dirname(agents), candidate), `referenced by ${agentEntry.path}`);
+        }
+      }
+    }
+  }
+
+  for (const candidate of CLAUDE_INSTRUCTION_CANDIDATES) {
+    addInstructionFile(path.join(repoRoot, candidate), "root Claude instructions");
+  }
+
+  return entries;
+}
+
+function findNearestAgentsFile(repoRoot, cwd) {
+  const root = realPathOrNull(repoRoot) ?? path.resolve(repoRoot);
+  let current = realPathOrNull(cwd) ?? path.resolve(cwd);
+  try {
+    if (fs.existsSync(current) && fs.lstatSync(current).isFile()) {
+      current = path.dirname(current);
+    }
+  } catch {
+    current = repoRoot;
+  }
+  if (path.relative(root, current).startsWith("..")) {
+    current = root;
+  }
+  while (true) {
+    const candidate = path.join(current, "AGENTS.md");
+    if (fs.existsSync(candidate)) return candidate;
+    if (current === root) return null;
+    const parent = path.dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
+}
+
+function realPathOrNull(value) {
+  try {
+    return fs.realpathSync(value);
+  } catch {
+    return null;
+  }
+}
+
+function findMarkdownPointers(content) {
+  const pointers = new Set();
+  const fencedPath = /`([^`\n]+\.md)`/gi;
+  for (const match of content.matchAll(fencedPath)) {
+    const pointer = match[1].trim();
+    if (!pointer || pointer.includes("://") || path.isAbsolute(pointer)) continue;
+    pointers.add(pointer);
+  }
+  return pointers;
+}
+
 export function collectReviewContext(options = {}) {
   const cwd = options.cwd ?? process.cwd();
   const repoRoot = ensureGitRepository(cwd);
@@ -194,6 +311,7 @@ export function collectReviewContext(options = {}) {
   }
 
   const nearbyContext = options.includeNearbyContext ? readNearbyContext(repoRoot, changedFiles) : [];
+  const repoInstructions = discoverRepoInstructions(repoRoot, cwd);
   const rawContext = {
     generated_at: new Date().toISOString(),
     repoRoot,
@@ -202,6 +320,7 @@ export function collectReviewContext(options = {}) {
     state,
     changed_files: changedFiles,
     sections,
+    repo_instructions: repoInstructions,
     nearby_context: nearbyContext,
     user_intent: options.userIntent ?? "",
   };

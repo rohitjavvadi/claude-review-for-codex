@@ -71,9 +71,21 @@ export function listReviews(repoRoot) {
       }
       return { id: entry.name, dir, summary };
     })
-    .sort((a, b) => b.id.localeCompare(a.id));
+    .sort(compareReviews);
 }
 
 export function latestReview(repoRoot) {
   return listReviews(repoRoot)[0] ?? null;
+}
+
+function compareReviews(a, b) {
+  const aTime = Date.parse(a.summary?.createdAt ?? "");
+  const bTime = Date.parse(b.summary?.createdAt ?? "");
+  if (Number.isFinite(aTime) && Number.isFinite(bTime) && aTime !== bTime) {
+    return bTime - aTime;
+  }
+  if (Number.isFinite(aTime) !== Number.isFinite(bTime)) {
+    return Number.isFinite(bTime) ? 1 : -1;
+  }
+  return b.id.localeCompare(a.id);
 }

@@ -28,6 +28,16 @@ test("command help works without requiring a value", () => {
   assert.match(result.stdout, /Usage: claude-review-for-codex review/);
 });
 
+test("top-level help includes current review flags", () => {
+  const repo = tempRepo("crg-top-help");
+  const result = runCli(["--help"], repo);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /--max-turns <n>/);
+  assert.match(result.stdout, /--max-budget-usd <amount>/);
+  assert.match(result.stdout, /review .*--json/);
+  assert.match(result.stdout, /Run `claude-review-for-codex <command> --help`/);
+});
+
 test("invalid scope and numeric flags fail clearly in JSON mode", () => {
   const repo = tempRepo("crg-bad-flags");
   fs.writeFileSync(path.join(repo, "x.txt"), "x\n");
@@ -171,6 +181,30 @@ test("background review starts tracked job and completes with fake Claude", asyn
     }
   }
   assert.fail("background job did not complete");
+});
+
+test("status lists reviews by summary creation time", () => {
+  const repo = tempRepo("crg-review-order");
+  const root = path.join(repo, ".codex", "claude-reviews");
+  fs.mkdirSync(path.join(root, "review-old-timestamp-name"), { recursive: true });
+  fs.mkdirSync(path.join(root, "qa-newer-custom-name"), { recursive: true });
+  fs.writeFileSync(path.join(root, "review-old-timestamp-name", "summary.json"), JSON.stringify({
+    reviewId: "review-old-timestamp-name",
+    status: "completed",
+    mode: "standard",
+    createdAt: "2026-05-14T00:00:00.000Z"
+  }, null, 2));
+  fs.writeFileSync(path.join(root, "qa-newer-custom-name", "summary.json"), JSON.stringify({
+    reviewId: "qa-newer-custom-name",
+    status: "completed",
+    mode: "standard",
+    createdAt: "2026-05-14T01:00:00.000Z"
+  }, null, 2));
+
+  const status = runCli(["status", "--json"], repo);
+  assert.equal(status.status, 0, status.stderr);
+  const payload = JSON.parse(status.stdout);
+  assert.deepEqual(payload.reviews.map((review) => review.id), ["qa-newer-custom-name", "review-old-timestamp-name"]);
 });
 
 test("status marks dead running jobs as failed", () => {

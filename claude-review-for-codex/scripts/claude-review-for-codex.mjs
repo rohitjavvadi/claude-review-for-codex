@@ -63,43 +63,26 @@ async function main() {
 function usage() {
   return [
     "Usage:",
-    "  claude-review-for-codex setup [--enable-hooks|--disable-hooks] [--auth-mode subscription-cli|api-key] [--clear-budget] [--json]",
-    "  claude-review-for-codex estimate [--mode cheap|standard|deep|adversarial] [--base <ref>] [--scope working-tree|branch] [--json]",
-    "  claude-review-for-codex review [--background] [--mode cheap|standard|deep] [--base <ref>] [--scope working-tree|branch] [--model <model>]",
-    "  claude-review-for-codex adversarial-review [--background] [--base <ref>] [--model <model>] [focus text]",
-    "  claude-review-for-codex review-fix [review args...]",
-    "  claude-review-for-codex verify [--review-id <id>]",
-    "  claude-review-for-codex status [--json]",
-    "  claude-review-for-codex result [review-id|job-id] [--json]",
-    "  claude-review-for-codex cancel <job-id> [--json]",
+    ...Object.values(COMMAND_USAGE).map((line) => `  ${line.replace(/^Usage: /, "")}`),
+    "",
+    "Run `claude-review-for-codex <command> --help` for command-specific help.",
   ].join("\n");
 }
 
+const COMMAND_USAGE = {
+  setup: "Usage: claude-review-for-codex setup [--enable-hooks|--disable-hooks] [--auth-mode subscription-cli|api-key] [--max-budget-usd <amount>|--clear-budget] [--json]",
+  estimate: "Usage: claude-review-for-codex estimate [--mode cheap|standard|deep|adversarial] [--base <ref>] [--scope working-tree|branch] [--max-turns <n>] [--max-budget-usd <amount>] [--json]",
+  review: "Usage: claude-review-for-codex review [--background] [--mode cheap|standard|deep] [--base <ref>] [--scope working-tree|branch] [--model <model>] [--max-turns <n>] [--max-budget-usd <amount>] [--json]",
+  "adversarial-review": "Usage: claude-review-for-codex adversarial-review [--background] [--base <ref>] [--scope working-tree|branch] [--model <model>] [--max-turns <n>] [--max-budget-usd <amount>] [--json] [focus text]",
+  "review-fix": "Usage: claude-review-for-codex review-fix [--review-id <id>] [review args...] [--json]",
+  verify: "Usage: claude-review-for-codex verify [--review-id <id>|review-id] [--mode cheap|standard|deep] [--model <model>] [--max-turns <n>] [--max-budget-usd <amount>] [--json]",
+  status: "Usage: claude-review-for-codex status [--json]",
+  result: "Usage: claude-review-for-codex result [review-id|job-id] [--json]",
+  cancel: "Usage: claude-review-for-codex cancel <job-id> [--json]",
+};
+
 function commandUsage(command) {
-  const lines = {
-    setup: [
-      "Usage: claude-review-for-codex setup [--enable-hooks|--disable-hooks] [--auth-mode subscription-cli|api-key] [--max-budget-usd <amount>|--clear-budget] [--json]",
-    ],
-    estimate: [
-      "Usage: claude-review-for-codex estimate [--mode cheap|standard|deep|adversarial] [--base <ref>] [--scope working-tree|branch] [--max-turns <n>] [--max-budget-usd <amount>] [--json]",
-    ],
-    review: [
-      "Usage: claude-review-for-codex review [--background] [--mode cheap|standard|deep] [--base <ref>] [--scope working-tree|branch] [--model <model>] [--max-turns <n>] [--max-budget-usd <amount>] [--json]",
-    ],
-    "adversarial-review": [
-      "Usage: claude-review-for-codex adversarial-review [--background] [--base <ref>] [--scope working-tree|branch] [--model <model>] [--max-turns <n>] [--max-budget-usd <amount>] [--json] [focus text]",
-    ],
-    "review-fix": [
-      "Usage: claude-review-for-codex review-fix [--review-id <id>] [review args...] [--json]",
-    ],
-    verify: [
-      "Usage: claude-review-for-codex verify [--review-id <id>|review-id] [--mode cheap|standard|deep] [--model <model>] [--max-turns <n>] [--max-budget-usd <amount>] [--json]",
-    ],
-    status: ["Usage: claude-review-for-codex status [--json]"],
-    result: ["Usage: claude-review-for-codex result [review-id|job-id] [--json]"],
-    cancel: ["Usage: claude-review-for-codex cancel <job-id> [--json]"],
-  };
-  return (lines[command] ?? [usage()]).join("\n");
+  return COMMAND_USAGE[command] ?? usage();
 }
 
 function parseArgs(argv) {

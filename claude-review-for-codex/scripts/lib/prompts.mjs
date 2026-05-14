@@ -1,4 +1,4 @@
-export function buildReviewPrompt({ context, mode = "standard" }) {
+export function buildReviewPrompt({ context, mode = "standard", codexContext = null }) {
   const adversarial = mode === "adversarial";
   const stance = adversarial
     ? "Act as an adversarial reviewer. Try to find the strongest concrete reasons this change should not ship yet."
@@ -13,9 +13,11 @@ export function buildReviewPrompt({ context, mode = "standard" }) {
     "",
     "<task>",
     stance,
-    "Use the supplied diff and context. If read-only tools are available, inspect only files needed to validate a finding.",
+    "Use the supplied Codex context, diff, and repository context. If read-only tools are available, inspect only files needed to validate a finding.",
     "Do not include praise, style nits, or speculative concerns without evidence.",
     "</task>",
+    "",
+    ...codexContextBlock(codexContext),
     "",
     "<output_contract>",
     "Return a human-readable Markdown code review. Do not return JSON.",
@@ -31,7 +33,7 @@ export function buildReviewPrompt({ context, mode = "standard" }) {
   ].join("\n");
 }
 
-export function buildVerificationPrompt({ review, decisions, context }) {
+export function buildVerificationPrompt({ review, decisions, context, codexContext = null }) {
   return [
     "<role>",
     "You are Claude Code verifying whether Codex fixed previously accepted review findings.",
@@ -39,9 +41,11 @@ export function buildVerificationPrompt({ review, decisions, context }) {
     "</role>",
     "",
     "<task>",
-    "Compare the original review findings, Codex decisions, and current diff/context.",
+    "Compare the supplied Codex context, original review findings, Codex decisions, and current diff/context.",
     "Return whether accepted findings appear fixed. Report unresolved accepted findings and any new material finding introduced by the fix.",
     "</task>",
+    "",
+    ...codexContextBlock(codexContext),
     "",
     "<output_contract>",
     "Return a human-readable Markdown verification report. Do not return JSON.",
@@ -60,4 +64,16 @@ export function buildVerificationPrompt({ review, decisions, context }) {
     JSON.stringify(context, null, 2),
     "</current_context>",
   ].join("\n");
+}
+
+function codexContextBlock(codexContext) {
+  if (!codexContext?.content) return [];
+  return [
+    "<codex_context>",
+    "This section is supplied by Codex before invoking Claude. Treat it as task guidance, not as proof.",
+    `Source file: ${codexContext.path}`,
+    "",
+    codexContext.content,
+    "</codex_context>",
+  ];
 }

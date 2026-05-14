@@ -66,6 +66,55 @@ test("review with fake Claude creates Markdown artifacts", () => {
   assert.ok(fs.existsSync(path.join(payload.artifactDir, "summary.json")));
 });
 
+test("review injects Codex context file into prompt and artifacts", () => {
+  const repo = tempRepo("crg-codex-context");
+  fs.writeFileSync(path.join(repo, "x.txt"), "x\n");
+  const inputDir = path.join(repo, ".codex", "claude-reviews", "input");
+  fs.mkdirSync(inputDir, { recursive: true });
+  fs.writeFileSync(path.join(inputDir, "codex-context.md"), [
+    "# Codex Context",
+    "Review HEAD~3..HEAD for sync regressions.",
+    "API_KEY=super-secret-token",
+  ].join("\n"));
+
+  const result = runCli([
+    "review",
+    "--codex-context-file",
+    ".codex/claude-reviews/input/codex-context.md",
+    "--json"
+  ], repo, {
+    CR_FAKE_CLAUDE_RESULT: FAKE_REVIEW,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  const prompt = fs.readFileSync(path.join(payload.artifactDir, "prompt.md"), "utf8");
+  const storedContext = fs.readFileSync(path.join(payload.artifactDir, "codex-context.md"), "utf8");
+  const summary = JSON.parse(fs.readFileSync(path.join(payload.artifactDir, "summary.json"), "utf8"));
+
+  assert.match(prompt, /<codex_context>/);
+  assert.match(prompt, /Review HEAD~3\.\.HEAD/);
+  assert.match(prompt, /API_KEY=\[REDACTED\]/);
+  assert.match(storedContext, /API_KEY=\[REDACTED\]/);
+  assert.equal(summary.codexContextFile, ".codex/claude-reviews/input/codex-context.md");
+  assert.ok(summary.codexContextBytes > 0);
+  assert.deepEqual(summary.codexContextRedactions, [{ type: "assignment-secret", count: 1 }]);
+});
+
+test("missing Codex context file fails clearly in JSON mode", () => {
+  const repo = tempRepo("crg-missing-codex-context");
+  fs.writeFileSync(path.join(repo, "x.txt"), "x\n");
+  const result = runCli([
+    "review",
+    "--codex-context-file",
+    ".codex/claude-reviews/input/missing.md",
+    "--json"
+  ], repo, {
+    CR_FAKE_CLAUDE_RESULT: FAKE_REVIEW,
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(JSON.parse(result.stdout).error.message, /--codex-context-file not found/);
+});
+
 test("review preserves arbitrary readable Claude output without schema validation", () => {
   const repo = tempRepo("crg-review-markdown");
   fs.writeFileSync(path.join(repo, "x.txt"), "x\n");
@@ -188,6 +237,8 @@ test("status lists reviews by summary creation time", () => {
   const root = path.join(repo, ".codex", "claude-reviews");
   fs.mkdirSync(path.join(root, "review-old-timestamp-name"), { recursive: true });
   fs.mkdirSync(path.join(root, "qa-newer-custom-name"), { recursive: true });
+  fs.mkdirSync(path.join(root, "input"), { recursive: true });
+  fs.writeFileSync(path.join(root, "input", "codex-context.md"), "transient context\n");
   fs.writeFileSync(path.join(root, "review-old-timestamp-name", "summary.json"), JSON.stringify({
     reviewId: "review-old-timestamp-name",
     status: "completed",

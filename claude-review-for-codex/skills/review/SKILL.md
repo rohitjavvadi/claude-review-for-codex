@@ -7,14 +7,23 @@ description: "Run a read-only Claude Code review of the current git diff. Use fo
 
 Resolve `<plugin-root>` as two directories above this `SKILL.md`.
 
+Before running the command, create `.codex/claude-reviews/input/codex-context.md` in the target repository unless the user already passed `--codex-context-file`. Keep it concise and include:
+
+- User request and review focus.
+- Codex's understanding of the change.
+- Files or commits being reviewed.
+- Tests/checks Codex already ran and their results.
+- Known failures, uncertainty, or areas where Claude should be skeptical.
+
 Run:
 
 ```bash
-node "<plugin-root>/scripts/claude-review-for-codex.mjs" review $ARGUMENTS
+node "<plugin-root>/scripts/claude-review-for-codex.mjs" review --codex-context-file .codex/claude-reviews/input/codex-context.md $ARGUMENTS
 ```
 
 Rules:
 - Claude is reviewer-only.
 - Do not let Claude edit files.
 - Do not fix review findings in this skill unless the user explicitly asked for `$cr:review-fix`.
-- Preserve user flags such as `--background`, `--base`, `--scope`, `--mode`, `--model`, and `--max-turns`.
+- Preserve user flags such as `--background`, `--base`, `--scope`, `--mode`, `--model`, `--max-turns`, and `--max-budget-usd`.
+- If the user supplies `--codex-context-file`, use their file path instead of creating/passing the default one.

@@ -57,7 +57,7 @@ export function listReviews(repoRoot) {
   const root = artifactRoot(repoRoot);
   if (!fs.existsSync(root)) return [];
   return fs.readdirSync(root, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && entry.name !== "jobs")
+    .filter((entry) => entry.isDirectory() && !["jobs", "input"].includes(entry.name))
     .map((entry) => {
       const dir = path.join(root, entry.name);
       const summaryPath = path.join(dir, "summary.json");

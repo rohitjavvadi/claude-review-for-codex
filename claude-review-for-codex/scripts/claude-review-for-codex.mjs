@@ -11,8 +11,10 @@ import { validateDecisions } from "./lib/schema.mjs";
 import { artifactRoot, latestReview, listReviews, readJson, reviewDir, writeJson, writeReviewArtifacts } from "./lib/artifacts.mjs";
 import { cancelJob, jobResultInfo, listJobs, patchJob, readJob, startBackgroundJob } from "./lib/jobs.mjs";
 import { renderReview, renderStatus } from "./lib/render.mjs";
+import { redactText } from "./lib/redaction.mjs";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
+const MAX_CODEX_CONTEXT_BYTES = 128 * 1024;
 
 async function main() {
   const [command = "help", ...argv] = process.argv.slice(2);
@@ -72,10 +74,10 @@ function usage() {
 const COMMAND_USAGE = {
   setup: "Usage: claude-review-for-codex setup [--enable-hooks|--disable-hooks] [--auth-mode subscription-cli|api-key] [--max-budget-usd <amount>|--clear-budget] [--json]",
   estimate: "Usage: claude-review-for-codex estimate [--mode cheap|standard|deep|adversarial] [--base <ref>] [--scope working-tree|branch] [--max-turns <n>] [--max-budget-usd <amount>] [--json]",
-  review: "Usage: claude-review-for-codex review [--background] [--mode cheap|standard|deep] [--base <ref>] [--scope working-tree|branch] [--model <model>] [--max-turns <n>] [--max-budget-usd <amount>] [--json]",
-  "adversarial-review": "Usage: claude-review-for-codex adversarial-review [--background] [--base <ref>] [--scope working-tree|branch] [--model <model>] [--max-turns <n>] [--max-budget-usd <amount>] [--json] [focus text]",
-  "review-fix": "Usage: claude-review-for-codex review-fix [--review-id <id>] [review args...] [--json]",
-  verify: "Usage: claude-review-for-codex verify [--review-id <id>|review-id] [--mode cheap|standard|deep] [--model <model>] [--max-turns <n>] [--max-budget-usd <amount>] [--json]",
+  review: "Usage: claude-review-for-codex review [--background] [--mode cheap|standard|deep] [--base <ref>] [--scope working-tree|branch] [--codex-context-file <path>] [--model <model>] [--max-turns <n>] [--max-budget-usd <amount>] [--json]",
+  "adversarial-review": "Usage: claude-review-for-codex adversarial-review [--background] [--base <ref>] [--scope working-tree|branch] [--codex-context-file <path>] [--model <model>] [--max-turns <n>] [--max-budget-usd <amount>] [--json] [focus text]",
+  "review-fix": "Usage: claude-review-for-codex review-fix [--review-id <id>] [--codex-context-file <path>] [review args...] [--json]",
+  verify: "Usage: claude-review-for-codex verify [--review-id <id>|review-id] [--mode cheap|standard|deep] [--codex-context-file <path>] [--model <model>] [--max-turns <n>] [--max-budget-usd <amount>] [--json]",
   status: "Usage: claude-review-for-codex status [--json]",
   result: "Usage: claude-review-for-codex result [review-id|job-id] [--json]",
   cancel: "Usage: claude-review-for-codex cancel <job-id> [--json]",
@@ -217,6 +219,7 @@ async function review(argv, { reviewKind }) {
 }
 
 async function runReview({ repoRoot, config, mode, options, reviewId, reviewKind }) {
+  const codexContext = readOptionalCodexContext(repoRoot, options, config);
   const context = collectReviewContext({
     cwd: repoRoot,
     base: options.base,
@@ -228,6 +231,7 @@ async function runReview({ repoRoot, config, mode, options, reviewId, reviewKind
   const prompt = buildReviewPrompt({
     context,
     mode: reviewKind === "adversarial" ? "adversarial" : mode.prompt,
+    codexContext,
   });
   const maxBudgetUsd = optionalNumber(options["max-budget-usd"] ?? config.maxBudgetUsd ?? null, "--max-budget-usd");
   const maxTurns = optionalPositiveInteger(options["max-turns"] ?? mode.maxTurns ?? config.maxTurns, "--max-turns");
@@ -252,15 +256,22 @@ async function runReview({ repoRoot, config, mode, options, reviewId, reviewKind
     model,
     maxBudgetUsd,
     maxTurns,
+    codexContextFile: codexContext?.path ?? null,
+    codexContextBytes: codexContext?.bytes ?? 0,
+    codexContextRedactions: codexContext?.redactions ?? [],
     createdAt,
   };
-  const artifactDir = writeReviewArtifacts(repoRoot, id, {
+  const artifacts = {
     "context.json": context,
     "prompt.md": prompt,
     "raw-output.txt": reviewMarkdown,
     "review.md": renderReview(reviewMarkdown, { ...summary, artifactDir: reviewDir(repoRoot, id) }),
     "summary.json": summary,
-  });
+  };
+  if (codexContext) {
+    artifacts["codex-context.md"] = codexContext.content;
+  }
+  const artifactDir = writeReviewArtifacts(repoRoot, id, artifacts);
   const rendered = renderReview(reviewMarkdown, { ...summary, artifactDir });
   return { ...summary, artifactDir, reviewMarkdown, rendered };
 }
@@ -318,7 +329,8 @@ async function verify(argv) {
     includeNearbyContext: mode.includeNearbyContext,
     config,
   });
-  const prompt = buildVerificationPrompt({ review: reviewMarkdown, decisions, context });
+  const codexContext = readOptionalCodexContext(repoRoot, options, config);
+  const prompt = buildVerificationPrompt({ review: reviewMarkdown, decisions, context, codexContext });
   const verificationMarkdown = await runClaudeText({
     cwd: repoRoot,
     prompt,
@@ -327,10 +339,14 @@ async function verify(argv) {
     maxBudgetUsd: optionalNumber(options["max-budget-usd"] ?? config.maxBudgetUsd ?? null, "--max-budget-usd"),
     authMode: options["auth-mode"] ?? config.authMode,
   });
-  writeReviewArtifacts(repoRoot, selected.id, {
+  const artifacts = {
     "verification.md": verificationMarkdown,
     "raw-verification-output.txt": verificationMarkdown,
-  });
+  };
+  if (codexContext) {
+    artifacts["verification-codex-context.md"] = codexContext.content;
+  }
+  writeReviewArtifacts(repoRoot, selected.id, artifacts);
   output({ reviewId: selected.id, verificationMarkdown }, options.json, `${verificationMarkdown.trim()}\n`);
 }
 
@@ -450,6 +466,38 @@ function validateScope(scope) {
   if (!["working-tree", "branch"].includes(scope)) {
     throw new Error(`Invalid --scope "${scope}". Use working-tree or branch.`);
   }
+}
+
+function readOptionalCodexContext(repoRoot, options, config) {
+  const requestedPath = options["codex-context-file"];
+  if (requestedPath == null || requestedPath === "") return null;
+  const resolvedPath = path.resolve(repoRoot, requestedPath);
+  let stat;
+  try {
+    stat = fs.statSync(resolvedPath);
+  } catch {
+    throw new Error(`--codex-context-file not found: ${requestedPath}`);
+  }
+  if (!stat.isFile()) {
+    throw new Error(`--codex-context-file must point to a file: ${requestedPath}`);
+  }
+  if (stat.size > MAX_CODEX_CONTEXT_BYTES) {
+    throw new Error(`--codex-context-file exceeds ${MAX_CODEX_CONTEXT_BYTES} bytes: ${requestedPath}`);
+  }
+  let content = fs.readFileSync(resolvedPath, "utf8");
+  const redactions = [];
+  if (config.redactSecrets !== false) {
+    const redacted = redactText(content);
+    content = redacted.text;
+    redactions.push(...redacted.redactions);
+  }
+  return {
+    path: path.relative(repoRoot, resolvedPath) || path.basename(resolvedPath),
+    absolutePath: resolvedPath,
+    bytes: stat.size,
+    redactions,
+    content,
+  };
 }
 
 function wantsJson(argv) {

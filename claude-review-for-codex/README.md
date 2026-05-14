@@ -79,6 +79,7 @@ node scripts/claude-review-for-codex.mjs setup
 node scripts/claude-review-for-codex.mjs estimate --mode standard
 node scripts/claude-review-for-codex.mjs review --mode standard
 node scripts/claude-review-for-codex.mjs review --model opus
+node scripts/claude-review-for-codex.mjs review --codex-context-file .codex/claude-reviews/input/codex-context.md
 node scripts/claude-review-for-codex.mjs review --background
 node scripts/claude-review-for-codex.mjs status
 node scripts/claude-review-for-codex.mjs result
@@ -107,12 +108,38 @@ Edit, Write, MultiEdit, NotebookEdit, Bash, WebFetch, WebSearch
 
 The runner also uses `--permission-mode dontAsk`, `--no-session-persistence`, and `--disallowedTools` when supported by the installed Claude CLI.
 
+## Codex Context Injection
+
+The review skills now create a small Codex-authored context file before calling Claude, then pass it with:
+
+```bash
+--codex-context-file .codex/claude-reviews/input/codex-context.md
+```
+
+This is the bridge between Codex's live chat understanding and Claude's read-only review. It helps when the repository has no `CLAUDE.md`, no useful git history, or when the user asked for a review target that is clearer in the conversation than in the diff.
+
+The file should stay concise:
+
+```markdown
+# Codex Context
+
+User request: review the last three commits for sync regressions.
+Review target: HEAD~3..HEAD.
+Codex summary: changed matching logic and report generation.
+Checks run: npm test passed.
+Known concerns: stale artifacts should not be included in review context.
+Claude focus: data loss, skipped records, rollback safety, missing tests.
+```
+
+The plugin redacts likely secrets from this file, injects the redacted text into the prompt, and saves the injected copy as `codex-context.md` in the review artifact directory.
+
 ## Artifacts
 
 Each review writes durable artifacts:
 
 ```text
 .codex/claude-reviews/<review-id>/
+  codex-context.md
   context.json
   prompt.md
   raw-output.txt

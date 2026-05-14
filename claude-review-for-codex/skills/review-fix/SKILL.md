@@ -7,10 +7,18 @@ description: "Run Claude read-only review, then have Codex validate each finding
 
 Resolve `<plugin-root>` as two directories above this `SKILL.md`.
 
+Before running the command, create `.codex/claude-reviews/input/codex-context.md` in the target repository unless the user already passed `--codex-context-file`. Keep it concise and include:
+
+- User request and desired fix/review outcome.
+- Codex's current understanding of the diff.
+- Files or commits being reviewed.
+- Tests/checks already run.
+- Known failures or risks Claude should inspect.
+
 First run:
 
 ```bash
-node "<plugin-root>/scripts/claude-review-for-codex.mjs" review-fix $ARGUMENTS
+node "<plugin-root>/scripts/claude-review-for-codex.mjs" review-fix --codex-context-file .codex/claude-reviews/input/codex-context.md $ARGUMENTS
 ```
 
 Then Codex must:
@@ -24,3 +32,5 @@ Then Codex must:
 8. Offer or run `$cr:verify` when useful.
 
 Never blindly apply Claude suggestions. Treat Claude output as advisory evidence.
+
+If the user supplies `--codex-context-file`, use their file path instead of creating/passing the default one.

@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import { loadConfig, resolveMode, saveConfig } from "./lib/config.mjs";
 import { collectReviewContext, ensureGitRepository, estimateContext } from "./lib/git.mjs";
-import { getClaudeStatus, runClaudeText } from "./lib/claude.mjs";
+import { getClaudeStatus, normalizeClaudeModel, runClaudeText } from "./lib/claude.mjs";
 import { buildReviewPrompt, buildVerificationPrompt } from "./lib/prompts.mjs";
 import { validateDecisions } from "./lib/schema.mjs";
 import { artifactRoot, latestReview, listReviews, readJson, reviewDir, writeJson, writeReviewArtifacts } from "./lib/artifacts.mjs";
@@ -16,7 +16,7 @@ import { redactText } from "./lib/redaction.mjs";
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const MAX_CODEX_CONTEXT_BYTES = 128 * 1024;
 const PLUGIN_NAME = "claude-review-for-codex";
-const PLUGIN_VERSION = "0.1.1";
+const PLUGIN_VERSION = "0.1.2";
 
 async function main() {
   const [command = "help", ...argv] = process.argv.slice(2);
@@ -104,9 +104,17 @@ function parseArgs(argv) {
     }
     const value = argv[++i];
     if (value == null) throw new Error(`Missing value for --${key}.`);
-    options[key] = value;
+    if (key === "model" && isModelVersionSuffix(argv[i + 1])) {
+      options[key] = `${value} ${argv[++i]}`;
+    } else {
+      options[key] = value;
+    }
   }
   return options;
+}
+
+function isModelVersionSuffix(value) {
+  return typeof value === "string" && !value.startsWith("--") && /^\d+(?:[._-]\d+){0,2}(?:\[1m\])?$/.test(value);
 }
 
 function repoRootFromCwd() {
@@ -240,7 +248,7 @@ async function runReview({ repoRoot, config, mode, options, reviewId, reviewKind
   });
   const maxBudgetUsd = optionalNumber(options["max-budget-usd"] ?? config.maxBudgetUsd ?? null, "--max-budget-usd");
   const maxTurns = optionalPositiveInteger(options["max-turns"] ?? mode.maxTurns ?? config.maxTurns, "--max-turns");
-  const model = options.model ?? mode.model ?? config.defaultModel;
+  const model = normalizeClaudeModel(options.model ?? mode.model ?? config.defaultModel);
   const id = reviewId || `${reviewKind === "adversarial" ? "adversarial" : "review"}-${new Date().toISOString().replace(/[:.]/g, "-")}`;
   const createdAt = new Date().toISOString();
   const reviewMarkdown = await runClaudeText({
@@ -341,7 +349,7 @@ async function verify(argv) {
   const verificationMarkdown = await runClaudeText({
     cwd: repoRoot,
     prompt,
-    model: options.model ?? mode.model,
+    model: normalizeClaudeModel(options.model ?? mode.model),
     maxTurns: optionalPositiveInteger(options["max-turns"] ?? mode.maxTurns, "--max-turns"),
     maxBudgetUsd: optionalNumber(options["max-budget-usd"] ?? config.maxBudgetUsd ?? null, "--max-budget-usd"),
     authMode: options["auth-mode"] ?? config.authMode,

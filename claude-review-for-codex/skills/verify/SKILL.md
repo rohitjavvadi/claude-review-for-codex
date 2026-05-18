@@ -19,4 +19,5 @@ Rules:
 - Verification is read-only.
 - Claude checks accepted findings against the current diff and decisions.
 - Codex remains responsible for any follow-up fixes.
+- Friendly model names are supported. If the user asks for "opus 4.7", pass `--model "opus 4.7"` or `--model opus 4.7`; the CLI normalizes it before invoking Claude Code.
 - If the user supplies `--codex-context-file`, use their file path instead of creating/passing the default one.

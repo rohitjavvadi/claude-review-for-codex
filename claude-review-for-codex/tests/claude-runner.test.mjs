@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildClaudeArgs } from "../scripts/lib/claude.mjs";
+import { buildClaudeArgs, normalizeClaudeModel } from "../scripts/lib/claude.mjs";
 
 test("default Claude args are read-only and not bare", () => {
   const args = buildClaudeArgs({
@@ -38,6 +38,22 @@ test("api-key mode adds bare", () => {
     authMode: "api-key",
   });
   assert.ok(args.includes("--bare"));
+});
+
+test("friendly model names are normalized for Claude Code", () => {
+  assert.equal(normalizeClaudeModel("opus 4.7"), "claude-opus-4-7");
+  assert.equal(normalizeClaudeModel("Claude Sonnet 4.6"), "claude-sonnet-4-6");
+  assert.equal(normalizeClaudeModel("opus plan"), "opusplan");
+  assert.equal(normalizeClaudeModel("opus"), "opus");
+
+  const args = buildClaudeArgs({
+    model: "opus 4.7",
+  });
+  assert.equal(args[args.indexOf("--model") + 1], "claude-opus-4-7");
+});
+
+test("dotted Claude shorthand model names are normalized", () => {
+  assert.equal(normalizeClaudeModel("claude-opus-4.7"), "claude-opus-4-7");
 });
 
 test("unsupported optional flags are omitted", () => {

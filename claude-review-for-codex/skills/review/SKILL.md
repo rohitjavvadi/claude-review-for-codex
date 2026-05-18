@@ -26,4 +26,5 @@ Rules:
 - Do not let Claude edit files.
 - Do not fix review findings in this skill unless the user explicitly asked for `$cr:review-fix`.
 - Preserve user flags such as `--background`, `--base`, `--scope`, `--mode`, `--model`, `--max-turns`, and `--max-budget-usd`.
+- Friendly model names are supported. If the user asks for "opus 4.7", pass `--model "opus 4.7"` or `--model opus 4.7`; the CLI normalizes it before invoking Claude Code.
 - If the user supplies `--codex-context-file`, use their file path instead of creating/passing the default one.

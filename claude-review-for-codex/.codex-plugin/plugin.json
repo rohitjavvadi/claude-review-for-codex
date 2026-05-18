@@ -1,6 +1,6 @@
 {
   "name": "claude-review-for-codex",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Experimental read-only Claude Code reviews for Codex, with Codex remaining the only writer and fixer.",
   "author": {
     "name": "Rohit Javvadi",

@@ -2,10 +2,44 @@ import { spawn } from "node:child_process";
 import { binaryAvailable, runCommand } from "./process.mjs";
 
 const MODEL_ALIASES = new Map([
+  ["default", "default"],
   ["sonnet", "sonnet"],
   ["opus", "opus"],
   ["haiku", "haiku"],
+  ["opusplan", "opusplan"],
+  ["opus plan", "opusplan"],
 ]);
+
+export function normalizeClaudeModel(model) {
+  if (model == null || model === "") return model;
+  const raw = String(model).trim();
+  if (!raw) return raw;
+  const normalizedWhitespace = raw.replace(/\s+/g, " ");
+  const alias = MODEL_ALIASES.get(normalizedWhitespace.toLowerCase());
+  if (alias) return alias;
+
+  const compactAlias = MODEL_ALIASES.get(normalizedWhitespace.toLowerCase().replace(/\s+/g, ""));
+  if (compactAlias) return compactAlias;
+
+  const claudeShorthand = normalizedWhitespace
+    .toLowerCase()
+    .replace(/^claude\s+/, "")
+    .replace(/[_-]+/g, " ");
+  const marketingName = /^(opus|sonnet)\s+(\d+)(?:[.\s]+(\d+))?(?:[.\s]+(\d+))?(\[1m\])?$/.exec(claudeShorthand);
+  if (marketingName) {
+    const [, family, major, minor, patch, contextSuffix = ""] = marketingName;
+    const versionParts = [major, minor, patch].filter(Boolean);
+    return `claude-${family}-${versionParts.join("-")}${contextSuffix}`;
+  }
+
+  const dottedClaudeName = /^claude-(opus|sonnet)-(\d+)\.(\d+)(.*)$/i.exec(raw);
+  if (dottedClaudeName) {
+    const [, family, major, minor, suffix] = dottedClaudeName;
+    return `claude-${family.toLowerCase()}-${major}-${minor}${suffix}`;
+  }
+
+  return raw;
+}
 
 export function getClaudeStatus(cwd = process.cwd()) {
   const availability = binaryAvailable("claude", ["--version"], cwd);
@@ -79,7 +113,7 @@ export function buildClaudeArgs({ model, maxTurns, maxBudgetUsd, authMode = "sub
     args.push("--bare");
   }
   if (model && supports("--model")) {
-    args.push("--model", MODEL_ALIASES.get(String(model).toLowerCase()) ?? model);
+    args.push("--model", normalizeClaudeModel(model));
   }
   if (maxTurns && supports("--max-turns")) {
     args.push("--max-turns", String(maxTurns));

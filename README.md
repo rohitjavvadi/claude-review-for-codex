@@ -131,6 +131,7 @@ node scripts/claude-review-for-codex.mjs setup
 node scripts/claude-review-for-codex.mjs estimate --mode standard
 node scripts/claude-review-for-codex.mjs review --mode standard
 node scripts/claude-review-for-codex.mjs review --model opus
+node scripts/claude-review-for-codex.mjs review --model "opus 4.7"
 node scripts/claude-review-for-codex.mjs review --codex-context-file .codex/claude-reviews/input/codex-context.md
 node scripts/claude-review-for-codex.mjs review --background
 node scripts/claude-review-for-codex.mjs status
@@ -144,6 +145,10 @@ node scripts/claude-review-for-codex.mjs result
 - `standard`: Sonnet, diff plus bounded nearby context.
 - `deep`: wider context, explicit opt-in.
 - `adversarial`: security, rollback, data loss, migrations, race conditions, and high-cost failure paths.
+
+## Claude Models
+
+`--model` accepts Claude Code aliases such as `sonnet`, `opus`, `haiku`, and `opusplan`. It also accepts friendly Claude 4 family names such as `opus 4.7`, `Claude Opus 4.7`, or `claude-opus-4.7` and normalizes them to Claude Code's compact model form, such as `claude-opus-4-7`.
 
 ## Claude Permissions
 

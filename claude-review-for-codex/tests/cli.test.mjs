@@ -83,7 +83,20 @@ test("review with fake Claude creates Markdown artifacts", () => {
   assert.ok(fs.existsSync(path.join(payload.artifactDir, "summary.json")));
   const summary = JSON.parse(fs.readFileSync(path.join(payload.artifactDir, "summary.json"), "utf8"));
   assert.equal(summary.pluginName, "claude-review-for-codex");
-  assert.equal(summary.pluginVersion, "0.1.1");
+  assert.equal(summary.pluginVersion, "0.1.2");
+});
+
+test("review accepts unquoted friendly model version", () => {
+  const repo = tempRepo("crg-review-friendly-model");
+  fs.writeFileSync(path.join(repo, "x.txt"), "x\n");
+  const result = runCli(["review", "--model", "opus", "4.7", "--json"], repo, {
+    CR_FAKE_CLAUDE_RESULT: FAKE_REVIEW,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  const summary = JSON.parse(fs.readFileSync(path.join(payload.artifactDir, "summary.json"), "utf8"));
+  assert.equal(payload.model, "claude-opus-4-7");
+  assert.equal(summary.model, "claude-opus-4-7");
 });
 
 test("review injects Codex context file into prompt and artifacts", () => {
@@ -286,7 +299,7 @@ test("status rendering marks current and legacy review artifacts", () => {
   fs.writeFileSync(path.join(root, "current-review", "summary.json"), JSON.stringify({
     reviewId: "current-review",
     pluginName: "claude-review-for-codex",
-    pluginVersion: "0.1.1",
+    pluginVersion: "0.1.2",
     status: "completed",
     mode: "standard",
     createdAt: "2026-05-14T01:00:00.000Z"
@@ -302,7 +315,7 @@ test("status rendering marks current and legacy review artifacts", () => {
   assert.equal(status.status, 0, status.stderr);
   assert.match(status.stdout, /Current Plugin Reviews:/);
   assert.match(status.stdout, /Legacy\/Unknown Review Artifacts:/);
-  assert.match(status.stdout, /current-review: completed \(claude-review-for-codex@0\.1\.1, standard\)/);
+  assert.match(status.stdout, /current-review: completed \(claude-review-for-codex@0\.1\.2, standard\)/);
   assert.match(status.stdout, /legacy-review: completed \(legacy\/unknown plugin, cheap\)/);
 
   const filtered = runCli(["status", "--current-plugin", "--json"], repo);

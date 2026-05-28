@@ -248,6 +248,24 @@ Created by `verify`:
 
 Claude suggestions are advisory, not patches.
 
+## Experimental: Codex-Supervised Claude Implementation (Manual Workflow)
+
+> **Experimental and manual.** This workflow has no automated plugin support. It requires deliberate setup and human judgment at every step. Do not use it in unattended or automated pipelines.
+
+In this workflow, Claude implements a change inside a disposable git worktree while Codex acts as supervisor, reviewer, and gatekeeper. Codex retains full merge authority and never delegates write access to Claude beyond the isolated worktree.
+
+**Conceptual steps:**
+
+1. **Create a disposable worktree.** A fresh git worktree on a throwaway branch keeps Claude's work isolated from the main branch and the working directory.
+2. **Give Claude a scoped task.** Claude Code is invoked with a precise, bounded task description. Write-capable tools are allowed only inside the worktree. Claude must not touch source outside the worktree, push branches, or modify package metadata or generated artifacts.
+3. **Claude implements.** Claude edits files inside the worktree according to the task.
+4. **Codex inspects the diff.** Codex (or the user) runs `git diff` against the base branch and inspects every changed file before anything else happens. No merge proceeds without this review.
+5. **Codex runs tests.** The full test suite runs against the worktree. Claude does not run tests; Codex does.
+6. **Codex decides.** If the diff is acceptable and tests pass, Codex (or the user) cherry-picks or merges the worktree branch. If anything looks wrong, the worktree branch is discarded and nothing is merged.
+7. **Discard the worktree.** Whether merged or rejected, the worktree and its branch are deleted after the decision.
+
+**Why keep it manual:** automated merge pipelines remove the human review step that makes this safe. The value of the workflow is that a human sees the diff before it lands.
+
 ## Privacy And Billing
 
 Claude Review for Codex sends redacted diffs and bounded file context to Claude. It does not send the whole repository by default. Generated review artifacts, logs, temp files, and `node_modules` are excluded from review context.

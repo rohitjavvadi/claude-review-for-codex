@@ -8,15 +8,16 @@ import { collectReviewContext, ensureGitRepository, estimateContext } from "./li
 import { getClaudeStatus, normalizeClaudeModel, runClaudeText } from "./lib/claude.mjs";
 import { buildReviewPrompt, buildVerificationPrompt } from "./lib/prompts.mjs";
 import { validateDecisions } from "./lib/schema.mjs";
-import { artifactRoot, latestReview, listReviews, readJson, reviewDir, writeJson, writeReviewArtifacts } from "./lib/artifacts.mjs";
+import { artifactRoot, createReviewId, latestReview, listReviews, readJson, reviewDir, safeId, writeJson, writeReviewArtifacts } from "./lib/artifacts.mjs";
 import { cancelJob, jobResultInfo, listJobs, patchJob, readJob, startBackgroundJob } from "./lib/jobs.mjs";
+import { runCommand, runCommandChecked } from "./lib/process.mjs";
 import { renderReview, renderStatus } from "./lib/render.mjs";
 import { redactText } from "./lib/redaction.mjs";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const MAX_CODEX_CONTEXT_BYTES = 128 * 1024;
 const PLUGIN_NAME = "claude-review-for-codex";
-const PLUGIN_VERSION = "0.1.2";
+const PLUGIN_VERSION = "0.1.3";
 
 async function main() {
   const [command = "help", ...argv] = process.argv.slice(2);
@@ -36,6 +37,12 @@ async function main() {
         return await review(argv, { reviewKind: "adversarial" });
       case "review-fix":
         return await reviewFix(argv);
+      case "implement":
+        return await implement(argv);
+      case "implement-accept":
+        return await implementAccept(argv);
+      case "implement-reject":
+        return await implementReject(argv);
       case "verify":
         return await verify(argv);
       case "status":
@@ -79,6 +86,9 @@ const COMMAND_USAGE = {
   review: "Usage: claude-review-for-codex review [--background] [--mode cheap|standard|deep] [--base <ref>] [--scope working-tree|branch] [--codex-context-file <path>] [--model <model>] [--max-turns <n>] [--max-budget-usd <amount>] [--json]",
   "adversarial-review": "Usage: claude-review-for-codex adversarial-review [--background] [--base <ref>] [--scope working-tree|branch] [--codex-context-file <path>] [--model <model>] [--max-turns <n>] [--max-budget-usd <amount>] [--json] [focus text]",
   "review-fix": "Usage: claude-review-for-codex review-fix [--review-id <id>] [--codex-context-file <path>] [review args...] [--json]",
+  implement: "Usage: claude-review-for-codex implement [--codex-context-file <path>] [--worktree-dir <path>] [--branch <name>] [--model <model>] [--max-turns <n>] [--max-budget-usd <amount>] [--json] <task>",
+  "implement-accept": "Usage: claude-review-for-codex implement-accept <run-id> [--message <commit message>] [--tests-run <summary>] [--review-note <note>] [--keep-worktree] [--json]",
+  "implement-reject": "Usage: claude-review-for-codex implement-reject <run-id> [--reason <reason>] [--json]",
   verify: "Usage: claude-review-for-codex verify [review-id] [--review-id <id>] [--mode cheap|standard|deep] [--codex-context-file <path>] [--model <model>] [--max-turns <n>] [--max-budget-usd <amount>] [--json]",
   status: "Usage: claude-review-for-codex status [--current-plugin] [--limit <n>] [--json]",
   result: "Usage: claude-review-for-codex result [review-id|job-id] [--json]",
@@ -98,7 +108,7 @@ function parseArgs(argv) {
       continue;
     }
     const key = arg.slice(2);
-    if (["json", "background", "enable-hooks", "disable-hooks", "clear-budget", "add-gitignore", "current-plugin", "help", "h"].includes(key)) {
+    if (["json", "background", "enable-hooks", "disable-hooks", "clear-budget", "add-gitignore", "current-plugin", "keep-worktree", "help", "h"].includes(key)) {
       options[key] = true;
       continue;
     }
@@ -318,6 +328,191 @@ async function reviewFix(argv) {
   );
 }
 
+async function implement(argv) {
+  const options = parseArgs(argv);
+  if (options["max-turns"] != null) optionalPositiveInteger(options["max-turns"], "--max-turns");
+  if (options["max-budget-usd"] != null) optionalNumber(options["max-budget-usd"], "--max-budget-usd");
+  const task = options._.join(" ").trim();
+  if (!task) {
+    throw new Error("implement requires a task description.");
+  }
+  const repoRoot = repoRootFromCwd();
+  assertNoTrackedChanges(repoRoot, "implement requires the main checkout to have no staged or unstaged tracked changes.");
+  const config = loadConfig(repoRoot);
+  const codexContext = readOptionalCodexContext(repoRoot, options, config);
+  const runId = options["run-id"] || createReviewId("implement");
+  const branch = options.branch || `codex/claude-implement-${safeId(runId)}`;
+  const baseBranch = getBranchName(repoRoot);
+  const baseCommit = gitOutput(repoRoot, ["rev-parse", "HEAD"]);
+  const worktreeDir = options["worktree-dir"]
+    ? path.resolve(repoRoot, options["worktree-dir"])
+    : path.join(path.dirname(repoRoot), `${path.basename(repoRoot)}-${safeId(runId)}`);
+  const artifactDir = implementRunDir(repoRoot, runId);
+  const createdAt = new Date().toISOString();
+
+  if (fs.existsSync(worktreeDir)) {
+    throw new Error(`Worktree path already exists: ${worktreeDir}`);
+  }
+  runCommandChecked("git", ["worktree", "add", "-b", branch, worktreeDir, "HEAD"], { cwd: repoRoot });
+
+  const model = normalizeClaudeModel(options.model ?? config.defaultModel ?? "sonnet");
+  const maxTurns = optionalPositiveInteger(options["max-turns"] ?? config.maxTurns ?? 4, "--max-turns");
+  const maxBudgetUsd = optionalNumber(options["max-budget-usd"] ?? config.maxBudgetUsd ?? null, "--max-budget-usd");
+  const prompt = buildImplementationPrompt({ task, repoRoot, worktreeDir, codexContext });
+  let claudeOutput = "";
+  let status = "needs-codex-review";
+  let error = null;
+  try {
+    claudeOutput = await runClaudeText({
+      cwd: worktreeDir,
+      prompt,
+      model,
+      maxTurns,
+      maxBudgetUsd,
+      authMode: options["auth-mode"] ?? config.authMode,
+      tools: ["Read", "Glob", "Grep", "LS", "Edit", "Write", "MultiEdit"],
+      disallowedTools: ["NotebookEdit", "Bash", "WebFetch", "WebSearch"],
+    });
+  } catch (caught) {
+    status = "failed";
+    error = caught.message;
+  }
+
+  const changedFiles = worktreeChangedFiles(worktreeDir);
+  const diff = worktreeDiff(worktreeDir);
+  const diffStat = worktreeDiffStat(worktreeDir);
+  const summary = {
+    runId,
+    pluginName: PLUGIN_NAME,
+    pluginVersion: PLUGIN_VERSION,
+    kind: "implement",
+    status,
+    task,
+    repoRoot,
+    worktreeDir,
+    branch,
+    baseBranch,
+    baseCommit,
+    model,
+    maxBudgetUsd,
+    maxTurns,
+    changedFiles,
+    codexContextFile: codexContext?.path ?? null,
+    codexContextBytes: codexContext?.bytes ?? 0,
+    codexContextRedactions: codexContext?.redactions ?? [],
+    createdAt,
+    error,
+    claudeAllowedTools: ["Read", "Glob", "Grep", "LS", "Edit", "Write", "MultiEdit"],
+    claudeDisallowedTools: ["NotebookEdit", "Bash", "WebFetch", "WebSearch"],
+    nextStep: status === "needs-codex-review"
+      ? "Codex must inspect claude.diff, run tests in the worktree, then run implement-accept or implement-reject."
+      : "Claude implementation failed. Inspect raw-output.txt and run implement-reject to clean up the worktree.",
+  };
+  fs.mkdirSync(artifactDir, { recursive: true });
+  writeJson(path.join(artifactDir, "summary.json"), summary);
+  fs.writeFileSync(path.join(artifactDir, "prompt.md"), ensureTrailingNewline(prompt));
+  fs.writeFileSync(path.join(artifactDir, "raw-output.txt"), ensureTrailingNewline(claudeOutput || ""));
+  fs.writeFileSync(path.join(artifactDir, "claude.diff"), ensureTrailingNewline(diff));
+  fs.writeFileSync(path.join(artifactDir, "diff-stat.txt"), ensureTrailingNewline(diffStat));
+  if (codexContext) {
+    fs.writeFileSync(path.join(artifactDir, "codex-context.md"), ensureTrailingNewline(codexContext.content));
+  }
+  writeJson(path.join(artifactDir, "decision.json"), {
+    run_id: runId,
+    decision: "pending",
+    reason: "",
+    tests_run: [],
+    files_reviewed_by_codex: [],
+  });
+
+  const rendered = renderImplementSummary(summary, artifactDir);
+  output({ ...summary, artifactDir, claudeOutput, rendered }, options.json, rendered);
+  if (status === "failed") process.exitCode = 1;
+}
+
+async function implementAccept(argv) {
+  const options = parseArgs(argv);
+  const repoRoot = repoRootFromCwd();
+  const runId = options._[0];
+  if (!runId) throw new Error("implement-accept requires a run id.");
+  const artifactDir = implementRunDir(repoRoot, runId);
+  const summaryPath = path.join(artifactDir, "summary.json");
+  if (!fs.existsSync(summaryPath)) throw new Error(`Implement run not found: ${runId}`);
+  const summary = readJson(summaryPath);
+  if (summary.status !== "needs-codex-review") {
+    throw new Error(`Implement run ${runId} is ${summary.status}; only needs-codex-review runs can be accepted.`);
+  }
+  if (!fs.existsSync(summary.worktreeDir)) {
+    throw new Error(`Worktree not found for run ${runId}: ${summary.worktreeDir}`);
+  }
+  assertNoTrackedChanges(repoRoot, "implement-accept requires the main checkout to have no staged or unstaged tracked changes.");
+  const changedFiles = worktreeChangedFiles(summary.worktreeDir);
+  if (!changedFiles.length) {
+    throw new Error("implement-accept requires at least one changed file in the Claude worktree.");
+  }
+  const testsRun = options["tests-run"] ? [options["tests-run"]] : [];
+  const commitMessage = options.message || `Accept Claude implementation ${runId}`;
+  runCommandChecked("git", ["add", "-A"], { cwd: summary.worktreeDir });
+  const commit = runCommand("git", ["commit", "-m", commitMessage], { cwd: summary.worktreeDir });
+  if (commit.status !== 0) {
+    throw new Error(`git commit failed: ${commit.stderr || commit.stdout}`);
+  }
+  const commitSha = gitOutput(summary.worktreeDir, ["rev-parse", "HEAD"]);
+  runCommandChecked("git", ["merge", "--ff-only", summary.branch], { cwd: repoRoot });
+  const cleanup = options["keep-worktree"] ? { kept: true } : cleanupImplementationWorktree(repoRoot, summary);
+  const acceptedAt = new Date().toISOString();
+  const nextSummary = {
+    ...summary,
+    status: "accepted",
+    changedFiles,
+    acceptedAt,
+    acceptedCommit: commitSha,
+    testsRun,
+    codexReviewNote: options["review-note"] ?? "",
+    cleanup,
+  };
+  writeJson(summaryPath, nextSummary);
+  writeJson(path.join(artifactDir, "decision.json"), {
+    run_id: runId,
+    decision: "accepted",
+    reason: options["review-note"] ?? "Accepted by Codex after diff review.",
+    tests_run: testsRun,
+    files_reviewed_by_codex: changedFiles,
+    accepted_commit: commitSha,
+  });
+  output({ ...nextSummary, artifactDir }, options.json, `Accepted Claude implementation ${runId}.\nCommit: ${commitSha}\nCleanup: ${cleanup.kept ? "kept worktree" : "removed worktree and branch"}\n`);
+}
+
+async function implementReject(argv) {
+  const options = parseArgs(argv);
+  const repoRoot = repoRootFromCwd();
+  const runId = options._[0];
+  if (!runId) throw new Error("implement-reject requires a run id.");
+  const artifactDir = implementRunDir(repoRoot, runId);
+  const summaryPath = path.join(artifactDir, "summary.json");
+  if (!fs.existsSync(summaryPath)) throw new Error(`Implement run not found: ${runId}`);
+  const summary = readJson(summaryPath);
+  const cleanup = cleanupImplementationWorktree(repoRoot, summary, { force: true });
+  const rejectedAt = new Date().toISOString();
+  const reason = options.reason || "Rejected by Codex.";
+  const nextSummary = {
+    ...summary,
+    status: "rejected",
+    rejectedAt,
+    rejectReason: reason,
+    cleanup,
+  };
+  writeJson(summaryPath, nextSummary);
+  writeJson(path.join(artifactDir, "decision.json"), {
+    run_id: runId,
+    decision: "rejected",
+    reason,
+    tests_run: [],
+    files_reviewed_by_codex: summary.changedFiles ?? [],
+  });
+  output({ ...nextSummary, artifactDir }, options.json, `Rejected Claude implementation ${runId}.\nCleanup: removed worktree and branch\n`);
+}
+
 async function verify(argv) {
   const options = parseArgs(argv);
   const repoRoot = repoRootFromCwd();
@@ -450,6 +645,156 @@ async function internalRunJob(argv) {
     }
     process.exitCode = 1;
   }
+}
+
+function implementRunRoot(repoRoot) {
+  return path.join(artifactRoot(repoRoot), "implement-runs");
+}
+
+function implementRunDir(repoRoot, runId) {
+  return path.join(implementRunRoot(repoRoot), safeId(runId));
+}
+
+function buildImplementationPrompt({ task, repoRoot, worktreeDir, codexContext = null }) {
+  return [
+    "<role>",
+    "You are Claude Code implementing a change under Codex supervision.",
+    "You may edit files only inside the supplied disposable git worktree.",
+    "Do not stage, commit, push, create branches, delete the worktree, install packages, or run shell commands.",
+    "Codex is the reviewer and merge gate. Codex will inspect the diff, run tests, and decide accept or reject.",
+    "</role>",
+    "",
+    "<task>",
+    task,
+    "</task>",
+    "",
+    ...implementationContextBlock(codexContext),
+    "",
+    "<workspace>",
+    `Repository root: ${repoRoot}`,
+    `Disposable worktree: ${worktreeDir}`,
+    "</workspace>",
+    "",
+    "<output_contract>",
+    "Return a concise implementation summary and list files changed.",
+    "Do not include patch text in the response.",
+    "</output_contract>",
+  ].join("\n");
+}
+
+function implementationContextBlock(codexContext) {
+  if (!codexContext?.content) return [];
+  return [
+    "<codex_context>",
+    `Source file: ${codexContext.path}`,
+    "",
+    codexContext.content,
+    "</codex_context>",
+  ];
+}
+
+function renderImplementSummary(summary, artifactDir) {
+  return [
+    "Claude implementation run",
+    `Run ID: ${summary.runId}`,
+    `Status: ${summary.status}`,
+    `Branch: ${summary.branch}`,
+    `Worktree: ${summary.worktreeDir}`,
+    `Artifacts: ${artifactDir}`,
+    `Changed files: ${summary.changedFiles.length ? summary.changedFiles.join(", ") : "none"}`,
+    summary.error ? `Error: ${summary.error}` : null,
+    "",
+    summary.nextStep,
+    "",
+  ].filter((line) => line != null).join("\n");
+}
+
+function worktreeChangedFiles(worktreeDir) {
+  const diffFiles = gitMaybe(worktreeDir, ["diff", "--name-only"]).trim().split("\n").filter(Boolean);
+  const untracked = gitMaybe(worktreeDir, ["ls-files", "--others", "--exclude-standard"]).trim().split("\n").filter(Boolean);
+  return [...new Set([...diffFiles, ...untracked])];
+}
+
+function worktreeUntrackedFiles(worktreeDir) {
+  return gitMaybe(worktreeDir, ["ls-files", "--others", "--exclude-standard"]).trim().split("\n").filter(Boolean);
+}
+
+function worktreeDiff(worktreeDir) {
+  const pieces = [gitMaybe(worktreeDir, ["diff", "--binary"])];
+  for (const file of worktreeUntrackedFiles(worktreeDir)) {
+    pieces.push(gitDiffNoIndex(worktreeDir, ["--binary", "--", "/dev/null", file]));
+  }
+  return pieces.filter(Boolean).join("\n");
+}
+
+function worktreeDiffStat(worktreeDir) {
+  const pieces = [gitMaybe(worktreeDir, ["diff", "--stat"])];
+  for (const file of worktreeUntrackedFiles(worktreeDir)) {
+    pieces.push(gitDiffNoIndex(worktreeDir, ["--stat", "--", "/dev/null", file]));
+  }
+  return pieces.filter(Boolean).join("\n");
+}
+
+function gitDiffNoIndex(cwd, args) {
+  const result = runCommand("git", ["diff", "--no-index", ...args], { cwd });
+  if (result.error || ![0, 1].includes(result.status)) {
+    return "";
+  }
+  return result.stdout;
+}
+
+function cleanupImplementationWorktree(repoRoot, summary, options = {}) {
+  const cleanup = {
+    kept: false,
+    worktreeRemoved: false,
+    branchDeleted: false,
+  };
+  if (summary.worktreeDir && fs.existsSync(summary.worktreeDir)) {
+    const args = ["worktree", "remove"];
+    if (options.force) args.push("--force");
+    args.push(summary.worktreeDir);
+    runCommandChecked("git", args, { cwd: repoRoot });
+    cleanup.worktreeRemoved = true;
+  }
+  if (summary.branch) {
+    const deleteResult = runCommand("git", ["branch", options.force ? "-D" : "-d", summary.branch], { cwd: repoRoot });
+    if (deleteResult.status === 0) {
+      cleanup.branchDeleted = true;
+    } else if (!deleteResult.stderr.includes("not found") && !deleteResult.stderr.includes("branch not found")) {
+      throw new Error(`git branch delete failed: ${deleteResult.stderr || deleteResult.stdout}`);
+    }
+  }
+  return cleanup;
+}
+
+function assertNoTrackedChanges(repoRoot, message) {
+  const staged = runCommand("git", ["diff", "--cached", "--quiet"], { cwd: repoRoot });
+  const unstaged = runCommand("git", ["diff", "--quiet"], { cwd: repoRoot });
+  if (staged.status !== 0 || unstaged.status !== 0) {
+    throw new Error(message);
+  }
+}
+
+function getBranchName(repoRoot) {
+  const branch = gitMaybe(repoRoot, ["branch", "--show-current"]).trim();
+  return branch || "HEAD";
+}
+
+function gitOutput(cwd, args) {
+  return runCommandChecked("git", args, { cwd }).stdout.trim();
+}
+
+function gitMaybe(cwd, args) {
+  const result = runCommand("git", args, { cwd });
+  if (result.error || result.status !== 0) {
+    return "";
+  }
+  return result.stdout;
+}
+
+function ensureTrailingNewline(value) {
+  const text = String(value ?? "");
+  return text.endsWith("\n") ? text : `${text}\n`;
 }
 
 function resolveReview(repoRoot, idOrJob) {

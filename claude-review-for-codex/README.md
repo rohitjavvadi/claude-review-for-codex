@@ -1,8 +1,8 @@
 # Claude Review for Codex
 
-Experimental v0.1 Codex plugin for asking Claude Code to review code without giving Claude write access.
+Experimental v0.1 Codex plugin for asking Claude Code to review code read-only, plus an opt-in supervised implementation workflow.
 
-Claude Review for Codex is a local Codex plugin that lets Codex ask Claude Code for a read-only code review while Codex remains the only agent allowed to edit files.
+Claude Review for Codex is a local Codex plugin that lets Codex ask Claude Code for a read-only code review while Codex remains the normal writer and fixer. When explicitly invoked with `$cr:implement`, Claude can write only inside a disposable git worktree; Codex still reviews, tests, accepts or rejects, merges, and cleans up.
 
 The plugin is intentionally simple:
 
@@ -11,6 +11,7 @@ The plugin is intentionally simple:
 - Claude returns a human-readable Markdown review.
 - Codex validates any findings before acting.
 - Codex records decisions and applies fixes itself.
+- For `$cr:implement`, Claude writes only in an isolated worktree and Codex remains the merge gate.
 
 ## Quick Install
 
@@ -48,7 +49,7 @@ After the plugin is installed into Codex's local cache, the plugin's own `script
 
 ## Why This Exists
 
-Codex is excellent at implementing fixes, but a second model can be useful for adversarial review, regression hunting, security checks, migration risk, and test-gap discovery. This plugin gives Codex a Claude reviewer without giving Claude write access.
+Codex is excellent at implementing fixes, but a second model can be useful for adversarial review, regression hunting, security checks, migration risk, test-gap discovery, and opt-in implementation attempts in isolation. This plugin gives Codex a Claude reviewer by default and a supervised Claude implementer only when explicitly requested.
 
 ## Release Status
 
@@ -56,9 +57,10 @@ This is an experimental v0.1 release. The core safety and orchestration paths ar
 
 ## Safety Contract
 
-- Claude is advisory only.
-- Claude must never edit, write, patch, stage, commit, install packages, or run arbitrary Bash.
-- Codex is the only writer and fixer.
+- Claude is advisory only for review, adversarial-review, review-fix, and verify.
+- Claude must never edit, write, patch, stage, commit, install packages, or run arbitrary Bash in review workflows.
+- `$cr:implement` is explicit opt-in for Claude writes, and those writes are confined to a disposable git worktree.
+- Codex is the only accepter, merger, committer in the original checkout, rejecter, and cleanup authority.
 - Reviews are Markdown-first. The plugin does not reject Claude output because of schema formatting drift.
 - Hooks are included but disabled by default.
 - No automatic Claude spending happens on install.
@@ -118,6 +120,7 @@ $cr:estimate
 $cr:review
 $cr:adversarial-review
 $cr:review-fix
+$cr:implement
 $cr:verify
 $cr:status
 $cr:result
@@ -134,6 +137,9 @@ node scripts/claude-review-for-codex.mjs review --model opus
 node scripts/claude-review-for-codex.mjs review --model "opus 4.7"
 node scripts/claude-review-for-codex.mjs review --codex-context-file .codex/claude-reviews/input/codex-context.md
 node scripts/claude-review-for-codex.mjs review --background
+node scripts/claude-review-for-codex.mjs implement "add focused tests for the parser"
+node scripts/claude-review-for-codex.mjs implement-accept <run-id> --tests-run "npm test passed"
+node scripts/claude-review-for-codex.mjs implement-reject <run-id> --reason "changed files outside scope"
 node scripts/claude-review-for-codex.mjs status
 node scripts/claude-review-for-codex.mjs status --current-plugin
 node scripts/claude-review-for-codex.mjs result
@@ -165,6 +171,8 @@ Edit, Write, MultiEdit, NotebookEdit, Bash, WebFetch, WebSearch
 ```
 
 The runner also uses `--permission-mode dontAsk`, `--no-session-persistence`, and `--disallowedTools` when supported by the installed Claude CLI.
+
+`$cr:implement` is the explicit exception. It creates a disposable git worktree and lets Claude use `Edit`, `Write`, and `MultiEdit` only inside that isolated worktree. Claude is still denied `Bash`, `WebFetch`, `WebSearch`, and `NotebookEdit`, and Codex remains the merge gate.
 
 ## Repository Instructions
 
@@ -231,7 +239,20 @@ Created by `verify`:
   verification.md
 ```
 
-`context.json` is the redacted payload sent to Claude. `raw-output.txt` is Claude's exact review text. `review.md` is the readable review shown to Codex and the user. `summary.json` includes the plugin name and version for new artifacts so older renamed-plugin history can be identified. `decisions.json` records which findings Codex accepted, rejected, or deferred.
+Created by `implement`:
+
+```text
+.codex/claude-reviews/implement-runs/<run-id>/
+  claude.diff
+  codex-context.md              optional, when --codex-context-file is used
+  decision.json
+  diff-stat.txt
+  prompt.md
+  raw-output.txt
+  summary.json
+```
+
+`context.json` is the redacted payload sent to Claude. `raw-output.txt` is Claude's exact review or implementation summary. `review.md` is the readable review shown to Codex and the user. `summary.json` includes the plugin name and version for new artifacts so older renamed-plugin history can be identified. `decisions.json` records which findings Codex accepted, rejected, or deferred. `decision.json` records whether a supervised implementation run was accepted or rejected.
 
 `status` groups current plugin reviews separately from legacy or unknown artifacts. Use `status --current-plugin` when old renamed-plugin history makes the list noisy.
 
@@ -247,6 +268,22 @@ Created by `verify`:
 6. Optionally run `$cr:verify`.
 
 Claude suggestions are advisory, not patches.
+
+## Codex-Supervised Claude Implementation
+
+`$cr:implement` lets Claude write code in a disposable git worktree while Codex supervises the result. It is intentionally a two-step gate: Claude can produce a diff, but Codex must inspect, test, and explicitly accept or reject it.
+
+Typical flow:
+
+1. Codex runs `$cr:implement <task>`.
+2. The CLI creates a disposable worktree on a throwaway branch.
+3. Claude implements inside that worktree with write tools enabled.
+4. The CLI saves `claude.diff`, `summary.json`, `raw-output.txt`, and a pending `decision.json`.
+5. Codex inspects every changed file and runs targeted checks in the worktree.
+6. If accepted, Codex runs `implement-accept <run-id> --tests-run "<checks>"`. The CLI commits the worktree branch, fast-forward merges it into the original checkout, then removes the worktree and branch.
+7. If rejected, Codex runs `implement-reject <run-id> --reason "<why>"`. The CLI force-removes the dirty worktree and deletes the throwaway branch.
+
+Do not accept a run just because Claude completed successfully. The safety property is the Codex review step between `implement` and `implement-accept`.
 
 ## Privacy And Billing
 

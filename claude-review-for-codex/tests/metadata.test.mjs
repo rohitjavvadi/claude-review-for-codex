@@ -29,6 +29,9 @@ test("README documents billing and hook defaults", () => {
   assert.match(readme, /Created by `review` and `adversarial-review`/);
   assert.match(readme, /Created by `review-fix`/);
   assert.match(readme, /Created by `verify`/);
+  assert.match(readme, /\$cr:implement/);
+  assert.match(readme, /implement-accept/);
+  assert.match(readme, /implement-reject/);
 });
 
 test("root install doctor exists", () => {

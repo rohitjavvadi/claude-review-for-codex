@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { spawn } from "node:child_process";
 import { binaryAvailable, runCommand } from "./process.mjs";
 
@@ -103,7 +105,15 @@ export function assertClaudeCapabilities(cwd = process.cwd()) {
   return capabilities;
 }
 
-export function buildClaudeArgs({ model, maxTurns, maxBudgetUsd, authMode = "subscription-cli", tools = ["Read", "Glob", "Grep", "LS"], capabilities = null }) {
+export function buildClaudeArgs({
+  model,
+  maxTurns,
+  maxBudgetUsd,
+  authMode = "subscription-cli",
+  tools = ["Read", "Glob", "Grep", "LS"],
+  disallowedTools = ["Edit", "Write", "MultiEdit", "NotebookEdit", "Bash", "WebFetch", "WebSearch"],
+  capabilities = null,
+}) {
   const args = ["-p", "--permission-mode", "dontAsk", "--no-session-persistence"];
   const supports = (flag) => !capabilities || !capabilities.missingOptional?.includes(flag);
   if (supports("--output-format")) {
@@ -127,12 +137,26 @@ export function buildClaudeArgs({ model, maxTurns, maxBudgetUsd, authMode = "sub
       args.push("--allowedTools", tool);
     }
   }
-  args.push("--disallowedTools", "Edit,Write,MultiEdit,NotebookEdit,Bash,WebFetch,WebSearch");
+  if (disallowedTools.length > 0) {
+    args.push("--disallowedTools", disallowedTools.join(","));
+  }
   return args;
 }
 
-export async function runClaudeText({ cwd, prompt, model, maxTurns, maxBudgetUsd, authMode }) {
+export async function runClaudeText({
+  cwd,
+  prompt,
+  model,
+  maxTurns,
+  maxBudgetUsd,
+  authMode,
+  tools = ["Read", "Glob", "Grep", "LS"],
+  disallowedTools = ["Edit", "Write", "MultiEdit", "NotebookEdit", "Bash", "WebFetch", "WebSearch"],
+}) {
   if (process.env.CR_FAKE_CLAUDE_RESULT) {
+    if (process.env.CR_FAKE_CLAUDE_WRITE_FILE) {
+      writeFakeClaudeFile(cwd, process.env.CR_FAKE_CLAUDE_WRITE_FILE, process.env.CR_FAKE_CLAUDE_WRITE_CONTENT ?? "");
+    }
     const delay = Number(process.env.CR_FAKE_CLAUDE_DELAY_MS ?? 0);
     if (delay > 0) {
       await new Promise((resolve) => setTimeout(resolve, delay));
@@ -150,7 +174,7 @@ export async function runClaudeText({ cwd, prompt, model, maxTurns, maxBudgetUsd
     );
   }
 
-  const args = buildClaudeArgs({ model, maxTurns, maxBudgetUsd, authMode, capabilities: status.capabilities });
+  const args = buildClaudeArgs({ model, maxTurns, maxBudgetUsd, authMode, tools, disallowedTools, capabilities: status.capabilities });
   return await new Promise((resolve, reject) => {
     const child = spawn("claude", args, {
       cwd,
@@ -183,4 +207,14 @@ export async function runClaudeText({ cwd, prompt, model, maxTurns, maxBudgetUsd
       resolve(text);
     });
   });
+}
+
+function writeFakeClaudeFile(cwd, relativePath, content) {
+  const root = path.resolve(cwd);
+  const file = path.resolve(root, relativePath);
+  if (!file.startsWith(`${root}${path.sep}`) && file !== root) {
+    throw new Error("CR_FAKE_CLAUDE_WRITE_FILE must stay inside the Claude working directory.");
+  }
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, content);
 }

@@ -1,6 +1,6 @@
 {
   "name": "claude-review-for-codex",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Experimental read-only Claude Code reviews for Codex, with Codex remaining the only writer and fixer.",
   "author": {
     "name": "Rohit Javvadi",
@@ -22,7 +22,7 @@
   "interface": {
     "displayName": "Claude Review for Codex",
     "shortDescription": "Experimental read-only Claude reviews for Codex edits.",
-    "longDescription": "Claude Review for Codex is an experimental v0.1 plugin that gives Codex a cost-aware second-opinion reviewer. Claude reads bounded review context and returns a human-readable Markdown review; Codex validates findings, records decisions, applies any fixes itself, and can ask Claude to verify the final diff.",
+    "longDescription": "Claude Review for Codex is an experimental v0.1 plugin that gives Codex a cost-aware second-opinion reviewer and an opt-in supervised implementation workflow. Claude can read bounded review context for advisory reviews, or write only inside a disposable worktree for $cr:implement; Codex validates findings, reviews diffs, runs checks, records decisions, and remains the merge gate.",
     "developerName": "Rohit Javvadi",
     "category": "Coding",
     "capabilities": [
@@ -35,6 +35,7 @@
     "defaultPrompt": [
       "Ask Claude to review my diff, then have Codex fix valid findings.",
       "Run an adversarial Claude review of this change.",
+      "Have Claude implement this in a disposable worktree while Codex supervises.",
       "Verify whether the accepted Claude findings are fixed."
     ],
     "brandColor": "#F59E0B",

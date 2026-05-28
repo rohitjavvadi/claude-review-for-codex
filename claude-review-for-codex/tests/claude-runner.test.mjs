@@ -69,3 +69,14 @@ test("unsupported optional flags are omitted", () => {
   assert.equal(args.includes("--max-turns"), false);
   assert.equal(args.includes("--model"), false);
 });
+
+test("implementation Claude args can allow write tools while denying shell and web", () => {
+  const args = buildClaudeArgs({
+    model: "sonnet",
+    tools: ["Read", "Glob", "Grep", "LS", "Edit", "Write", "MultiEdit"],
+    disallowedTools: ["NotebookEdit", "Bash", "WebFetch", "WebSearch"],
+  });
+  assert.ok(args.includes("Read,Glob,Grep,LS,Edit,Write,MultiEdit"));
+  assert.ok(args.includes("NotebookEdit,Bash,WebFetch,WebSearch"));
+  assert.equal(args.join(" ").includes("Edit,Write,MultiEdit,NotebookEdit"), false);
+});

@@ -52,7 +52,8 @@ test("top-level help includes current review flags", () => {
   assert.match(result.stdout, /--max-turns <n>/);
   assert.match(result.stdout, /--max-budget-usd <amount>/);
   assert.match(result.stdout, /review .*--json/);
-  assert.match(result.stdout, /implement .*<task>/);
+  assert.match(result.stdout, /implement .*--stream/);
+  assert.match(result.stdout, /implement-status <run-id>/);
   assert.match(result.stdout, /implement-accept <run-id>/);
   assert.match(result.stdout, /Run `claude-review-for-codex <command> --help`/);
 });
@@ -85,7 +86,7 @@ test("review with fake Claude creates Markdown artifacts", () => {
   assert.ok(fs.existsSync(path.join(payload.artifactDir, "summary.json")));
   const summary = JSON.parse(fs.readFileSync(path.join(payload.artifactDir, "summary.json"), "utf8"));
   assert.equal(summary.pluginName, "claude-review-for-codex");
-  assert.equal(summary.pluginVersion, "0.1.3");
+  assert.equal(summary.pluginVersion, "0.1.4");
 });
 
 test("review accepts unquoted friendly model version", () => {
@@ -159,10 +160,22 @@ test("implement accept creates isolated worktree artifacts, merges, and cleans u
   assert.equal(result.status, 0, result.stderr);
   const payload = JSON.parse(result.stdout);
   assert.equal(payload.status, "needs-codex-review");
+  assert.equal(payload.stream, true);
+  assert.ok(payload.eventCount >= 1);
   assert.deepEqual(payload.changedFiles, ["docs/claude.md"]);
+  assert.equal(payload.riskSummary.verdict, "clean");
   assert.ok(fs.existsSync(worktree));
   assert.ok(fs.existsSync(path.join(payload.artifactDir, "claude.diff")));
+  assert.ok(fs.existsSync(path.join(payload.artifactDir, "events.ndjson")));
+  assert.ok(fs.existsSync(path.join(payload.artifactDir, "live.log")));
   assert.match(fs.readFileSync(path.join(payload.artifactDir, "claude.diff"), "utf8"), /new file mode/);
+
+  const status = runCli(["implement-status", payload.runId, "--json"], repo);
+  assert.equal(status.status, 0, status.stderr);
+  const statusPayload = JSON.parse(status.stdout);
+  assert.equal(statusPayload.worktreeExists, true);
+  assert.deepEqual(statusPayload.changedFiles, ["docs/claude.md"]);
+  assert.match(statusPayload.nextCommand, /implement-accept/);
 
   const accept = runCli([
     "implement-accept",
@@ -208,6 +221,9 @@ test("implement reject discards dirty worktree and leaves main unchanged", () =>
   });
   assert.equal(result.status, 0, result.stderr);
   const payload = JSON.parse(result.stdout);
+  assert.equal(payload.status, "blocked");
+  assert.equal(payload.riskSummary.verdict, "blocked");
+  assert.equal(payload.scope.blocking[0].reason, "risky-path-requires-explicit-allowance");
   assert.deepEqual(payload.changedFiles, ["package.json"]);
 
   const rejected = runCli([
@@ -225,6 +241,109 @@ test("implement reject discards dirty worktree and leaves main unchanged", () =>
   assert.equal(fs.existsSync(worktree), false);
   assert.equal(run("git", ["branch", "--list", "codex/test-reject"], repo).stdout.trim(), "");
   assert.match(fs.readFileSync(path.join(repo, "package.json"), "utf8"), /"version": "0.1.0"/);
+});
+
+test("implement dry-run accept reports merge plan without changing main or cleanup", () => {
+  const repo = tempRepo("crg-implement-dry-run");
+  fs.writeFileSync(path.join(repo, ".gitignore"), ".codex/\n");
+  fs.writeFileSync(path.join(repo, "README.md"), "# Test\n");
+  run("git", ["add", "."], repo);
+  run("git", ["commit", "-m", "initial"], repo);
+  const initialHead = run("git", ["rev-parse", "HEAD"], repo).stdout.trim();
+  const worktree = path.join(path.dirname(repo), `${path.basename(repo)}-dry-worktree`);
+  const result = runCli([
+    "implement",
+    "--worktree-dir",
+    worktree,
+    "--branch",
+    "codex/test-dry",
+    "--json",
+    "Create a dry-run note"
+  ], repo, {
+    CR_FAKE_CLAUDE_RESULT: "Created note.",
+    CR_FAKE_CLAUDE_WRITE_FILE: "docs/dry.md",
+    CR_FAKE_CLAUDE_WRITE_CONTENT: "# Dry run\n",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  const dry = runCli(["implement-accept", payload.runId, "--dry-run", "--json"], repo);
+  assert.equal(dry.status, 0, dry.stderr);
+  const dryPayload = JSON.parse(dry.stdout);
+  assert.equal(dryPayload.status, "dry-run");
+  assert.equal(dryPayload.cleanup.dryRun, true);
+  assert.equal(run("git", ["rev-parse", "HEAD"], repo).stdout.trim(), initialHead);
+  assert.equal(fs.existsSync(worktree), true);
+  assert.match(run("git", ["branch", "--list", "codex/test-dry"], repo).stdout, /codex\/test-dry/);
+  const rejected = runCli(["implement-reject", payload.runId, "--reason", "dry run cleanup", "--json"], repo);
+  assert.equal(rejected.status, 0, rejected.stderr);
+  assert.equal(fs.existsSync(worktree), false);
+});
+
+test("implement blocks files outside allow scope and accept refuses them", () => {
+  const repo = tempRepo("crg-implement-scope");
+  fs.writeFileSync(path.join(repo, ".gitignore"), ".codex/\n");
+  fs.writeFileSync(path.join(repo, "README.md"), "# Test\n");
+  run("git", ["add", "."], repo);
+  run("git", ["commit", "-m", "initial"], repo);
+  const worktree = path.join(path.dirname(repo), `${path.basename(repo)}-scope-worktree`);
+  const result = runCli([
+    "implement",
+    "--worktree-dir",
+    worktree,
+    "--branch",
+    "codex/test-scope",
+    "--allow",
+    "src/**",
+    "--json",
+    "Accidentally edit docs"
+  ], repo, {
+    CR_FAKE_CLAUDE_RESULT: "Edited README.",
+    CR_FAKE_CLAUDE_WRITE_FILE: "README.md",
+    CR_FAKE_CLAUDE_WRITE_CONTENT: "# Test\n\noutside scope\n",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.status, "blocked");
+  assert.equal(payload.scope.blocking[0].reason, "outside-allow-scope");
+  const accept = runCli(["implement-accept", payload.runId, "--json"], repo);
+  assert.notEqual(accept.status, 0);
+  assert.match(JSON.parse(accept.stdout).error.message, /only needs-codex-review|scope\/risk/);
+  const rejected = runCli(["implement-reject", payload.runId, "--reason", "outside scope", "--json"], repo);
+  assert.equal(rejected.status, 0, rejected.stderr);
+  assert.equal(fs.existsSync(worktree), false);
+});
+
+test("implement test-cmd runs checks and blocks failed test command", () => {
+  const repo = tempRepo("crg-implement-test-cmd");
+  fs.writeFileSync(path.join(repo, ".gitignore"), ".codex/\n");
+  fs.writeFileSync(path.join(repo, "README.md"), "# Test\n");
+  run("git", ["add", "."], repo);
+  run("git", ["commit", "-m", "initial"], repo);
+  const worktree = path.join(path.dirname(repo), `${path.basename(repo)}-testcmd-worktree`);
+  const result = runCli([
+    "implement",
+    "--worktree-dir",
+    worktree,
+    "--branch",
+    "codex/test-cmd",
+    "--test-cmd",
+    "test -f missing-file",
+    "--json",
+    "Create a note but fail tests"
+  ], repo, {
+    CR_FAKE_CLAUDE_RESULT: "Created note.",
+    CR_FAKE_CLAUDE_WRITE_FILE: "docs/test.md",
+    CR_FAKE_CLAUDE_WRITE_CONTENT: "# Test\n",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.status, "tests-failed");
+  assert.equal(payload.testResults[0].status, 1);
+  const accept = runCli(["implement-accept", payload.runId, "--json"], repo);
+  assert.notEqual(accept.status, 0);
+  const rejected = runCli(["implement-reject", payload.runId, "--reason", "tests failed", "--json"], repo);
+  assert.equal(rejected.status, 0, rejected.stderr);
+  assert.equal(fs.existsSync(worktree), false);
 });
 
 test("missing Codex context file fails clearly in JSON mode", () => {
@@ -393,7 +512,7 @@ test("status rendering marks current and legacy review artifacts", () => {
   fs.writeFileSync(path.join(root, "current-review", "summary.json"), JSON.stringify({
     reviewId: "current-review",
     pluginName: "claude-review-for-codex",
-    pluginVersion: "0.1.3",
+    pluginVersion: "0.1.4",
     status: "completed",
     mode: "standard",
     createdAt: "2026-05-14T01:00:00.000Z"
@@ -409,7 +528,7 @@ test("status rendering marks current and legacy review artifacts", () => {
   assert.equal(status.status, 0, status.stderr);
   assert.match(status.stdout, /Current Plugin Reviews:/);
   assert.match(status.stdout, /Legacy\/Unknown Review Artifacts:/);
-  assert.match(status.stdout, /current-review: completed \(claude-review-for-codex@0\.1\.3, standard\)/);
+  assert.match(status.stdout, /current-review: completed \(claude-review-for-codex@0\.1\.4, standard\)/);
   assert.match(status.stdout, /legacy-review: completed \(legacy\/unknown plugin, cheap\)/);
 
   const filtered = runCli(["status", "--current-plugin", "--json"], repo);

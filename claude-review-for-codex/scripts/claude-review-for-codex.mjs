@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import { loadConfig, resolveMode, saveConfig } from "./lib/config.mjs";
 import { collectReviewContext, ensureGitRepository, estimateContext } from "./lib/git.mjs";
-import { getClaudeStatus, normalizeClaudeModel, runClaudeText } from "./lib/claude.mjs";
+import { getClaudeStatus, normalizeClaudeModel, runClaudeStream, runClaudeText } from "./lib/claude.mjs";
 import { buildReviewPrompt, buildVerificationPrompt } from "./lib/prompts.mjs";
 import { validateDecisions } from "./lib/schema.mjs";
 import { artifactRoot, createReviewId, latestReview, listReviews, readJson, reviewDir, safeId, writeJson, writeReviewArtifacts } from "./lib/artifacts.mjs";
@@ -17,7 +17,28 @@ import { redactText } from "./lib/redaction.mjs";
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const MAX_CODEX_CONTEXT_BYTES = 128 * 1024;
 const PLUGIN_NAME = "claude-review-for-codex";
-const PLUGIN_VERSION = "0.1.3";
+const PLUGIN_VERSION = "0.1.4";
+const IMPLEMENT_WRITE_TOOLS = ["Read", "Glob", "Grep", "LS", "Edit", "Write", "MultiEdit"];
+const IMPLEMENT_DENIED_TOOLS = ["NotebookEdit", "Bash", "WebFetch", "WebSearch"];
+const DEFAULT_IMPLEMENT_DENY_PATTERNS = [
+  ".env",
+  ".env.*",
+  "**/.env",
+  "**/.env.*",
+  ".git/**",
+  ".codex/**",
+  "node_modules/**",
+];
+const RISKY_IMPLEMENT_PATTERNS = [
+  "package.json",
+  "package-lock.json",
+  "pnpm-lock.yaml",
+  "yarn.lock",
+  "bun.lockb",
+  "migrations/**",
+  "db/migrations/**",
+  ".github/workflows/**",
+];
 
 async function main() {
   const [command = "help", ...argv] = process.argv.slice(2);
@@ -39,6 +60,8 @@ async function main() {
         return await reviewFix(argv);
       case "implement":
         return await implement(argv);
+      case "implement-status":
+        return await implementStatus(argv);
       case "implement-accept":
         return await implementAccept(argv);
       case "implement-reject":
@@ -86,8 +109,9 @@ const COMMAND_USAGE = {
   review: "Usage: claude-review-for-codex review [--background] [--mode cheap|standard|deep] [--base <ref>] [--scope working-tree|branch] [--codex-context-file <path>] [--model <model>] [--max-turns <n>] [--max-budget-usd <amount>] [--json]",
   "adversarial-review": "Usage: claude-review-for-codex adversarial-review [--background] [--base <ref>] [--scope working-tree|branch] [--codex-context-file <path>] [--model <model>] [--max-turns <n>] [--max-budget-usd <amount>] [--json] [focus text]",
   "review-fix": "Usage: claude-review-for-codex review-fix [--review-id <id>] [--codex-context-file <path>] [review args...] [--json]",
-  implement: "Usage: claude-review-for-codex implement [--codex-context-file <path>] [--worktree-dir <path>] [--branch <name>] [--model <model>] [--max-turns <n>] [--max-budget-usd <amount>] [--json] <task>",
-  "implement-accept": "Usage: claude-review-for-codex implement-accept <run-id> [--message <commit message>] [--tests-run <summary>] [--review-note <note>] [--keep-worktree] [--json]",
+  implement: "Usage: claude-review-for-codex implement [--stream|--no-stream] [--allow <glob>] [--deny <glob>] [--allow-risky] [--test-cmd <cmd>] [--timeout-ms <n>] [--codex-context-file <path>] [--worktree-dir <path>] [--branch <name>] [--model <model>] [--max-turns <n>] [--max-budget-usd <amount>] [--json] <task>",
+  "implement-status": "Usage: claude-review-for-codex implement-status <run-id> [--json]",
+  "implement-accept": "Usage: claude-review-for-codex implement-accept <run-id> [--message <commit message>] [--tests-run <summary>] [--test-cmd <cmd>] [--review-note <note>] [--dry-run] [--keep-worktree] [--json]",
   "implement-reject": "Usage: claude-review-for-codex implement-reject <run-id> [--reason <reason>] [--json]",
   verify: "Usage: claude-review-for-codex verify [review-id] [--review-id <id>] [--mode cheap|standard|deep] [--codex-context-file <path>] [--model <model>] [--max-turns <n>] [--max-budget-usd <amount>] [--json]",
   status: "Usage: claude-review-for-codex status [--current-plugin] [--limit <n>] [--json]",
@@ -108,13 +132,16 @@ function parseArgs(argv) {
       continue;
     }
     const key = arg.slice(2);
-    if (["json", "background", "enable-hooks", "disable-hooks", "clear-budget", "add-gitignore", "current-plugin", "keep-worktree", "help", "h"].includes(key)) {
+    if (["json", "background", "stream", "no-stream", "allow-risky", "dry-run", "enable-hooks", "disable-hooks", "clear-budget", "add-gitignore", "current-plugin", "keep-worktree", "help", "h"].includes(key)) {
       options[key] = true;
       continue;
     }
     const value = argv[++i];
     if (value == null) throw new Error(`Missing value for --${key}.`);
-    if (key === "model" && isModelVersionSuffix(argv[i + 1])) {
+    if (["allow", "deny", "test-cmd"].includes(key)) {
+      if (!Array.isArray(options[key])) options[key] = [];
+      options[key].push(value);
+    } else if (key === "model" && isModelVersionSuffix(argv[i + 1])) {
       options[key] = `${value} ${argv[++i]}`;
     } else {
       options[key] = value;
@@ -332,6 +359,7 @@ async function implement(argv) {
   const options = parseArgs(argv);
   if (options["max-turns"] != null) optionalPositiveInteger(options["max-turns"], "--max-turns");
   if (options["max-budget-usd"] != null) optionalNumber(options["max-budget-usd"], "--max-budget-usd");
+  if (options["timeout-ms"] != null) optionalPositiveInteger(options["timeout-ms"], "--timeout-ms");
   const task = options._.join(" ").trim();
   if (!task) {
     throw new Error("implement requires a task description.");
@@ -358,21 +386,51 @@ async function implement(argv) {
   const model = normalizeClaudeModel(options.model ?? config.defaultModel ?? "sonnet");
   const maxTurns = optionalPositiveInteger(options["max-turns"] ?? config.maxTurns ?? 4, "--max-turns");
   const maxBudgetUsd = optionalNumber(options["max-budget-usd"] ?? config.maxBudgetUsd ?? null, "--max-budget-usd");
-  const prompt = buildImplementationPrompt({ task, repoRoot, worktreeDir, codexContext });
+  const timeoutMs = optionalPositiveInteger(options["timeout-ms"] ?? null, "--timeout-ms");
+  const allowPatterns = optionList(options.allow);
+  const denyPatterns = [...DEFAULT_IMPLEMENT_DENY_PATTERNS, ...optionList(options.deny)];
+  const allowRisky = options["allow-risky"] === true;
+  const testCommands = optionList(options["test-cmd"]);
+  const stream = options["no-stream"] !== true;
+  const prompt = buildImplementationPrompt({ task, repoRoot, worktreeDir, codexContext, allowPatterns, denyPatterns, allowRisky, testCommands });
   let claudeOutput = "";
   let status = "needs-codex-review";
   let error = null;
+  let streamResult = null;
   try {
-    claudeOutput = await runClaudeText({
-      cwd: worktreeDir,
-      prompt,
-      model,
-      maxTurns,
-      maxBudgetUsd,
-      authMode: options["auth-mode"] ?? config.authMode,
-      tools: ["Read", "Glob", "Grep", "LS", "Edit", "Write", "MultiEdit"],
-      disallowedTools: ["NotebookEdit", "Bash", "WebFetch", "WebSearch"],
-    });
+    if (stream) {
+      streamResult = await runClaudeStream({
+        cwd: worktreeDir,
+        prompt,
+        model,
+        maxTurns,
+        maxBudgetUsd,
+        timeoutMs,
+        authMode: options["auth-mode"] ?? config.authMode,
+        tools: IMPLEMENT_WRITE_TOOLS,
+        disallowedTools: IMPLEMENT_DENIED_TOOLS,
+        eventsFile: path.join(artifactDir, "events.ndjson"),
+        liveLogFile: path.join(artifactDir, "live.log"),
+        stderrFile: path.join(artifactDir, "stderr.log"),
+        onLiveEvent: options.json ? null : (chunk) => process.stdout.write(chunk),
+      });
+      claudeOutput = streamResult.text;
+      if (streamResult.timedOut) {
+        status = "timed-out";
+        error = `Claude implementation exceeded timeout ${timeoutMs}ms.`;
+      }
+    } else {
+      claudeOutput = await runClaudeText({
+        cwd: worktreeDir,
+        prompt,
+        model,
+        maxTurns,
+        maxBudgetUsd,
+        authMode: options["auth-mode"] ?? config.authMode,
+        tools: IMPLEMENT_WRITE_TOOLS,
+        disallowedTools: IMPLEMENT_DENIED_TOOLS,
+      });
+    }
   } catch (caught) {
     status = "failed";
     error = caught.message;
@@ -381,6 +439,17 @@ async function implement(argv) {
   const changedFiles = worktreeChangedFiles(worktreeDir);
   const diff = worktreeDiff(worktreeDir);
   const diffStat = worktreeDiffStat(worktreeDir);
+  const scope = evaluateImplementationScope(changedFiles, { allowPatterns, denyPatterns, allowRisky });
+  const riskSummary = buildRiskSummary(changedFiles, scope);
+  if (status === "needs-codex-review" && scope.blocking.length > 0) {
+    status = "blocked";
+    error = "Claude changed files outside the allowed scope or touched denied/risky files.";
+  }
+  const testResults = runImplementationTestCommands(worktreeDir, testCommands);
+  if (status === "needs-codex-review" && testResults.some((result) => result.status !== 0)) {
+    status = "tests-failed";
+    error = "One or more --test-cmd checks failed.";
+  }
   const summary = {
     runId,
     pluginName: PLUGIN_NAME,
@@ -396,17 +465,27 @@ async function implement(argv) {
     model,
     maxBudgetUsd,
     maxTurns,
+    stream,
+    timeoutMs,
     changedFiles,
+    allowPatterns,
+    denyPatterns,
+    allowRisky,
+    scope,
+    riskSummary,
+    testCommands,
+    testResults,
+    eventCount: streamResult?.events?.length ?? null,
     codexContextFile: codexContext?.path ?? null,
     codexContextBytes: codexContext?.bytes ?? 0,
     codexContextRedactions: codexContext?.redactions ?? [],
     createdAt,
     error,
-    claudeAllowedTools: ["Read", "Glob", "Grep", "LS", "Edit", "Write", "MultiEdit"],
-    claudeDisallowedTools: ["NotebookEdit", "Bash", "WebFetch", "WebSearch"],
+    claudeAllowedTools: IMPLEMENT_WRITE_TOOLS,
+    claudeDisallowedTools: IMPLEMENT_DENIED_TOOLS,
     nextStep: status === "needs-codex-review"
-      ? "Codex must inspect claude.diff, run tests in the worktree, then run implement-accept or implement-reject."
-      : "Claude implementation failed. Inspect raw-output.txt and run implement-reject to clean up the worktree.",
+      ? "Codex must inspect claude.diff and risk-summary.json, run any additional checks in the worktree, then run implement-accept or implement-reject."
+      : "Do not accept this run as-is. Inspect artifacts, then run implement-reject to clean up or rerun with explicit scope.",
   };
   fs.mkdirSync(artifactDir, { recursive: true });
   writeJson(path.join(artifactDir, "summary.json"), summary);
@@ -414,6 +493,11 @@ async function implement(argv) {
   fs.writeFileSync(path.join(artifactDir, "raw-output.txt"), ensureTrailingNewline(claudeOutput || ""));
   fs.writeFileSync(path.join(artifactDir, "claude.diff"), ensureTrailingNewline(diff));
   fs.writeFileSync(path.join(artifactDir, "diff-stat.txt"), ensureTrailingNewline(diffStat));
+  writeJson(path.join(artifactDir, "risk-summary.json"), riskSummary);
+  writeJson(path.join(artifactDir, "test-results.json"), testResults);
+  if (!stream) {
+    fs.writeFileSync(path.join(artifactDir, "live.log"), ensureTrailingNewline(claudeOutput || ""));
+  }
   if (codexContext) {
     fs.writeFileSync(path.join(artifactDir, "codex-context.md"), ensureTrailingNewline(codexContext.content));
   }
@@ -423,11 +507,50 @@ async function implement(argv) {
     reason: "",
     tests_run: [],
     files_reviewed_by_codex: [],
+    risk_summary: riskSummary,
   });
 
   const rendered = renderImplementSummary(summary, artifactDir);
   output({ ...summary, artifactDir, claudeOutput, rendered }, options.json, rendered);
   if (status === "failed") process.exitCode = 1;
+}
+
+async function implementStatus(argv) {
+  const options = parseArgs(argv);
+  const repoRoot = repoRootFromCwd();
+  const runId = options._[0];
+  if (!runId) throw new Error("implement-status requires a run id.");
+  const artifactDir = implementRunDir(repoRoot, runId);
+  const summaryPath = path.join(artifactDir, "summary.json");
+  if (!fs.existsSync(summaryPath)) throw new Error(`Implement run not found: ${runId}`);
+  const summary = readJson(summaryPath);
+  const changedFiles = fs.existsSync(summary.worktreeDir) ? worktreeChangedFiles(summary.worktreeDir) : (summary.changedFiles ?? []);
+  const eventsPath = path.join(artifactDir, "events.ndjson");
+  const liveLogPath = path.join(artifactDir, "live.log");
+  const payload = {
+    ...summary,
+    artifactDir,
+    worktreeExists: fs.existsSync(summary.worktreeDir),
+    changedFiles,
+    eventCount: fs.existsSync(eventsPath) ? lineCount(eventsPath) : 0,
+    lastLiveLog: fs.existsSync(liveLogPath) ? readTail(liveLogPath, 3000) : "",
+    nextCommand: summary.status === "needs-codex-review"
+      ? `implement-accept ${runId} --tests-run "<checks>"`
+      : summary.status === "accepted" || summary.status === "rejected"
+        ? null
+        : `implement-reject ${runId} --reason "<reason>"`,
+  };
+  const text = [
+    "Claude implementation status",
+    `Run ID: ${runId}`,
+    `Status: ${payload.status}`,
+    `Worktree exists: ${payload.worktreeExists ? "yes" : "no"}`,
+    `Changed files: ${changedFiles.length ? changedFiles.join(", ") : "none"}`,
+    `Events: ${payload.eventCount}`,
+    payload.nextCommand ? `Next: ${payload.nextCommand}` : null,
+    payload.lastLiveLog ? `\nRecent live log:\n${payload.lastLiveLog.trim()}\n` : "",
+  ].filter((line) => line != null).join("\n");
+  output(payload, options.json, `${text}\n`);
 }
 
 async function implementAccept(argv) {
@@ -450,8 +573,37 @@ async function implementAccept(argv) {
   if (!changedFiles.length) {
     throw new Error("implement-accept requires at least one changed file in the Claude worktree.");
   }
-  const testsRun = options["tests-run"] ? [options["tests-run"]] : [];
+  const scope = evaluateImplementationScope(changedFiles, {
+    allowPatterns: summary.allowPatterns ?? [],
+    denyPatterns: summary.denyPatterns ?? DEFAULT_IMPLEMENT_DENY_PATTERNS,
+    allowRisky: summary.allowRisky === true,
+  });
+  if (scope.blocking.length > 0) {
+    throw new Error(`implement-accept blocked by scope/risk violations: ${scope.blocking.map((item) => `${item.path} (${item.reason})`).join(", ")}`);
+  }
+  const testCommands = [...(summary.testCommands ?? []), ...optionList(options["test-cmd"])];
+  const commandResults = runImplementationTestCommands(summary.worktreeDir, optionList(options["test-cmd"]));
+  if (commandResults.some((result) => result.status !== 0)) {
+    throw new Error(`implement-accept blocked because --test-cmd failed: ${commandResults.map((result) => `${result.command} => ${result.status}`).join(", ")}`);
+  }
+  const testsRun = [...(summary.testResults ?? []), ...commandResults].map(formatTestResult);
+  if (options["tests-run"]) testsRun.push(...optionList(options["tests-run"]));
+  const dryRun = options["dry-run"] === true;
   const commitMessage = options.message || `Accept Claude implementation ${runId}`;
+  if (dryRun) {
+    const dryPayload = {
+      ...summary,
+      status: "dry-run",
+      changedFiles,
+      testsRun,
+      scope,
+      wouldCommitMessage: commitMessage,
+      wouldMergeBranch: summary.branch,
+      cleanup: { kept: true, dryRun: true },
+    };
+    output(dryPayload, options.json, `Dry run accept for ${runId}.\nWould commit: ${commitMessage}\nWould merge branch: ${summary.branch}\nChanged files: ${changedFiles.join(", ")}\n`);
+    return;
+  }
   runCommandChecked("git", ["add", "-A"], { cwd: summary.worktreeDir });
   const commit = runCommand("git", ["commit", "-m", commitMessage], { cwd: summary.worktreeDir });
   if (commit.status !== 0) {
@@ -468,6 +620,7 @@ async function implementAccept(argv) {
     acceptedAt,
     acceptedCommit: commitSha,
     testsRun,
+    scope,
     codexReviewNote: options["review-note"] ?? "",
     cleanup,
   };
@@ -655,7 +808,7 @@ function implementRunDir(repoRoot, runId) {
   return path.join(implementRunRoot(repoRoot), safeId(runId));
 }
 
-function buildImplementationPrompt({ task, repoRoot, worktreeDir, codexContext = null }) {
+function buildImplementationPrompt({ task, repoRoot, worktreeDir, codexContext = null, allowPatterns = [], denyPatterns = [], allowRisky = false, testCommands = [] }) {
   return [
     "<role>",
     "You are Claude Code implementing a change under Codex supervision.",
@@ -674,6 +827,14 @@ function buildImplementationPrompt({ task, repoRoot, worktreeDir, codexContext =
     `Repository root: ${repoRoot}`,
     `Disposable worktree: ${worktreeDir}`,
     "</workspace>",
+    "",
+    "<codex_supervision_policy>",
+    `Allowed path globs: ${allowPatterns.length ? allowPatterns.join(", ") : "(all paths except denied/risky paths)"}`,
+    `Denied path globs: ${denyPatterns.join(", ")}`,
+    `Risky paths require explicit allowance: ${allowRisky ? "no" : "yes"}`,
+    testCommands.length ? `Codex test commands to run after Claude exits: ${testCommands.join(" && ")}` : "Codex will decide which tests to run after Claude exits.",
+    "If a requested change requires a denied or risky file, stop and explain instead of editing that file.",
+    "</codex_supervision_policy>",
     "",
     "<output_contract>",
     "Return a concise implementation summary and list files changed.",
@@ -713,6 +874,100 @@ function worktreeChangedFiles(worktreeDir) {
   const diffFiles = gitMaybe(worktreeDir, ["diff", "--name-only"]).trim().split("\n").filter(Boolean);
   const untracked = gitMaybe(worktreeDir, ["ls-files", "--others", "--exclude-standard"]).trim().split("\n").filter(Boolean);
   return [...new Set([...diffFiles, ...untracked])];
+}
+
+function evaluateImplementationScope(changedFiles, { allowPatterns = [], denyPatterns = [], allowRisky = false } = {}) {
+  const allowed = [];
+  const warnings = [];
+  const blocking = [];
+  for (const file of changedFiles) {
+    const allowMatched = allowPatterns.length === 0 || matchesAnyGlob(file, allowPatterns);
+    const explicitAllowMatched = allowPatterns.length > 0 && matchesAnyGlob(file, allowPatterns);
+    const denyMatched = matchesAnyGlob(file, denyPatterns);
+    const riskyMatched = matchesAnyGlob(file, RISKY_IMPLEMENT_PATTERNS);
+    if (!allowMatched) {
+      blocking.push({ path: file, reason: "outside-allow-scope" });
+      continue;
+    }
+    if (denyMatched && !explicitAllowMatched) {
+      blocking.push({ path: file, reason: "denied-path" });
+      continue;
+    }
+    if (riskyMatched && !allowRisky && !explicitAllowMatched) {
+      blocking.push({ path: file, reason: "risky-path-requires-explicit-allowance" });
+      continue;
+    }
+    if (riskyMatched) {
+      warnings.push({ path: file, reason: "risky-path" });
+    }
+    allowed.push(file);
+  }
+  return { allowed, warnings, blocking };
+}
+
+function buildRiskSummary(changedFiles, scope) {
+  return {
+    changedFiles,
+    allowedFiles: scope.allowed,
+    warnings: scope.warnings,
+    blocking: scope.blocking,
+    verdict: scope.blocking.length ? "blocked" : scope.warnings.length ? "review-carefully" : "clean",
+  };
+}
+
+function runImplementationTestCommands(worktreeDir, commands) {
+  return optionList(commands).map((command) => {
+    const startedAt = new Date().toISOString();
+    const result = runCommand("sh", ["-lc", command], { cwd: worktreeDir, maxBuffer: 2 * 1024 * 1024 });
+    return {
+      command,
+      status: result.status,
+      signal: result.signal,
+      stdoutTail: tailText(result.stdout, 4000),
+      stderrTail: tailText(result.stderr, 4000),
+      startedAt,
+      finishedAt: new Date().toISOString(),
+    };
+  });
+}
+
+function formatTestResult(result) {
+  if (typeof result === "string") return result;
+  return `${result.command}: ${result.status === 0 ? "passed" : `failed (${result.status})`}`;
+}
+
+function optionList(value) {
+  if (value == null) return [];
+  return Array.isArray(value) ? value.filter((item) => item != null && item !== "") : [value].filter(Boolean);
+}
+
+function matchesAnyGlob(file, patterns) {
+  return optionList(patterns).some((pattern) => globToRegExp(pattern).test(normalizePath(file)));
+}
+
+function normalizePath(value) {
+  return String(value ?? "").split(path.sep).join("/");
+}
+
+function globToRegExp(pattern) {
+  const normalized = normalizePath(pattern);
+  let out = "^";
+  for (let i = 0; i < normalized.length; i++) {
+    const char = normalized[i];
+    const next = normalized[i + 1];
+    if (char === "*" && next === "*") {
+      out += ".*";
+      i++;
+    } else if (char === "*") {
+      out += "[^/]*";
+    } else if (char === "?") {
+      out += "[^/]";
+    } else {
+      out += char.replace(/[|\\{}()[\]^$+?.]/g, "\\$&");
+    }
+  }
+  out += "$";
+  return new RegExp(out);
 }
 
 function worktreeUntrackedFiles(worktreeDir) {
@@ -790,6 +1045,19 @@ function gitMaybe(cwd, args) {
     return "";
   }
   return result.stdout;
+}
+
+function lineCount(file) {
+  return fs.readFileSync(file, "utf8").split(/\r?\n/).filter(Boolean).length;
+}
+
+function readTail(file, maxChars = 4000) {
+  return tailText(fs.readFileSync(file, "utf8"), maxChars);
+}
+
+function tailText(text, maxChars = 4000) {
+  const value = String(text ?? "");
+  return value.length > maxChars ? value.slice(value.length - maxChars) : value;
 }
 
 function ensureTrailingNewline(value) {

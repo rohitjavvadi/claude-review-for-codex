@@ -1,7 +1,7 @@
 {
   "name": "claude-review-for-codex",
-  "version": "0.1.3",
-  "description": "Codex plugin that asks Claude Code for read-only reviews while Codex remains the writer.",
+  "version": "0.1.4",
+  "description": "Codex plugin for Claude Code reviews and live-supervised disposable-worktree implementation.",
   "type": "module",
   "author": "Rohit Javvadi",
   "homepage": "https://github.com/rohitjavvadi/claude-review-for-codex",

@@ -30,6 +30,10 @@ test("README documents billing and hook defaults", () => {
   assert.match(readme, /Created by `review-fix`/);
   assert.match(readme, /Created by `verify`/);
   assert.match(readme, /\$cr:implement/);
+  assert.match(readme, /events\.ndjson/);
+  assert.match(readme, /risk-summary\.json/);
+  assert.match(readme, /implement-status/);
+  assert.match(readme, /--dry-run/);
   assert.match(readme, /implement-accept/);
   assert.match(readme, /implement-reject/);
 });

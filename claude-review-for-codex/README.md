@@ -134,10 +134,12 @@ node scripts/claude-review-for-codex.mjs setup
 node scripts/claude-review-for-codex.mjs estimate --mode standard
 node scripts/claude-review-for-codex.mjs review --mode standard
 node scripts/claude-review-for-codex.mjs review --model opus
-node scripts/claude-review-for-codex.mjs review --model "opus 4.7"
+node scripts/claude-review-for-codex.mjs review --model "opus 4.8"
 node scripts/claude-review-for-codex.mjs review --codex-context-file .codex/claude-reviews/input/codex-context.md
 node scripts/claude-review-for-codex.mjs review --background
-node scripts/claude-review-for-codex.mjs implement "add focused tests for the parser"
+node scripts/claude-review-for-codex.mjs implement --allow "src/**" --test-cmd "npm test" "add focused tests for the parser"
+node scripts/claude-review-for-codex.mjs implement-status <run-id>
+node scripts/claude-review-for-codex.mjs implement-accept <run-id> --dry-run
 node scripts/claude-review-for-codex.mjs implement-accept <run-id> --tests-run "npm test passed"
 node scripts/claude-review-for-codex.mjs implement-reject <run-id> --reason "changed files outside scope"
 node scripts/claude-review-for-codex.mjs status
@@ -154,7 +156,7 @@ node scripts/claude-review-for-codex.mjs result
 
 ## Claude Models
 
-`--model` accepts Claude Code aliases such as `sonnet`, `opus`, `haiku`, and `opusplan`. It also accepts friendly Claude 4 family names such as `opus 4.7`, `Claude Opus 4.7`, or `claude-opus-4.7` and normalizes them to Claude Code's compact model form, such as `claude-opus-4-7`.
+`--model` accepts Claude Code aliases such as `sonnet`, `opus`, `haiku`, and `opusplan`. It also accepts friendly Claude 4 family names such as `opus 4.8`, `Claude Opus 4.8`, or `claude-opus-4.8` and normalizes them to Claude Code's compact model form, such as `claude-opus-4-8`.
 
 ## Claude Permissions
 
@@ -172,7 +174,7 @@ Edit, Write, MultiEdit, NotebookEdit, Bash, WebFetch, WebSearch
 
 The runner also uses `--permission-mode dontAsk`, `--no-session-persistence`, and `--disallowedTools` when supported by the installed Claude CLI.
 
-`$cr:implement` is the explicit exception. It creates a disposable git worktree and lets Claude use `Edit`, `Write`, and `MultiEdit` only inside that isolated worktree. Claude is still denied `Bash`, `WebFetch`, `WebSearch`, and `NotebookEdit`, and Codex remains the merge gate.
+`$cr:implement` is the explicit exception. It creates a disposable git worktree and lets Claude use `Edit`, `Write`, and `MultiEdit` only inside that isolated worktree. Claude is still denied `Bash`, `WebFetch`, `WebSearch`, and `NotebookEdit`, streaming supervision is enabled by default, and Codex remains the merge gate.
 
 ## Repository Instructions
 
@@ -247,9 +249,14 @@ Created by `implement`:
   codex-context.md              optional, when --codex-context-file is used
   decision.json
   diff-stat.txt
+  events.ndjson                 stream-json events, when streaming is enabled
+  live.log                      readable live stream summary
   prompt.md
   raw-output.txt
+  risk-summary.json
+  stderr.log                    Claude stderr, when streaming is enabled
   summary.json
+  test-results.json
 ```
 
 `context.json` is the redacted payload sent to Claude. `raw-output.txt` is Claude's exact review or implementation summary. `review.md` is the readable review shown to Codex and the user. `summary.json` includes the plugin name and version for new artifacts so older renamed-plugin history can be identified. `decisions.json` records which findings Codex accepted, rejected, or deferred. `decision.json` records whether a supervised implementation run was accepted or rejected.
@@ -271,17 +278,20 @@ Claude suggestions are advisory, not patches.
 
 ## Codex-Supervised Claude Implementation
 
-`$cr:implement` lets Claude write code in a disposable git worktree while Codex supervises the result. It is intentionally a two-step gate: Claude can produce a diff, but Codex must inspect, test, and explicitly accept or reject it.
+`$cr:implement` lets Claude write code in a disposable git worktree while Codex supervises the result. It is intentionally a two-step gate: Claude can produce a diff, but Codex must inspect, test, and explicitly accept or reject it. Streaming is the default, so Codex can watch Claude's tool calls as `events.ndjson` and `live.log` are written.
 
 Typical flow:
 
 1. Codex runs `$cr:implement <task>`.
 2. The CLI creates a disposable worktree on a throwaway branch.
 3. Claude implements inside that worktree with write tools enabled.
-4. The CLI saves `claude.diff`, `summary.json`, `raw-output.txt`, and a pending `decision.json`.
-5. Codex inspects every changed file and runs targeted checks in the worktree.
-6. If accepted, Codex runs `implement-accept <run-id> --tests-run "<checks>"`. The CLI commits the worktree branch, fast-forward merges it into the original checkout, then removes the worktree and branch.
-7. If rejected, Codex runs `implement-reject <run-id> --reason "<why>"`. The CLI force-removes the dirty worktree and deletes the throwaway branch.
+4. The CLI streams `events.ndjson` and `live.log`, then saves `claude.diff`, `risk-summary.json`, `test-results.json`, `summary.json`, `raw-output.txt`, and a pending `decision.json`.
+5. Codex inspects every changed file and runs targeted checks in the worktree. `--test-cmd "<cmd>"` can run checks automatically after Claude exits.
+6. Scope guards can block risky edits: use `--allow "<glob>"`, `--deny "<glob>"`, and `--allow-risky` for package metadata, lockfiles, migrations, or CI workflows when those are expected.
+7. `implement-status <run-id>` shows the current status, event count, recent live log, changed files, and next suggested command.
+8. `implement-accept <run-id> --dry-run` previews the commit, merge, and cleanup plan without changing main.
+9. If accepted, Codex runs `implement-accept <run-id> --tests-run "<checks>"`. The CLI commits the worktree branch, fast-forward merges it into the original checkout, then removes the worktree and branch.
+10. If rejected, Codex runs `implement-reject <run-id> --reason "<why>"`. The CLI force-removes the dirty worktree and deletes the throwaway branch.
 
 Do not accept a run just because Claude completed successfully. The safety property is the Codex review step between `implement` and `implement-accept`.
 

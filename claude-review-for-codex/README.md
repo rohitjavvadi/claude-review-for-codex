@@ -18,6 +18,8 @@ Use it when you want:
 
 Read the short walkthrough: [docs/DEMO.md](docs/DEMO.md).
 
+Want to help? See [docs/ROADMAP.md](docs/ROADMAP.md) for focused contribution ideas.
+
 ## Why It Matters
 
 This is an Experimental v0.1 release. The safety and orchestration paths are covered by tests with fake Claude output, but real review quality still depends on Claude Code, repository context, prompts, and account limits.
@@ -332,6 +334,8 @@ tests/                                 Node test suite
 ## Contributing
 
 Issues and pull requests are welcome. The highest-value areas are safer context collection, better review prompts, clearer artifacts, stronger scope guards, and smoother local marketplace installation.
+
+Good first areas are listed in [docs/ROADMAP.md](docs/ROADMAP.md).
 
 Before opening a PR:
 

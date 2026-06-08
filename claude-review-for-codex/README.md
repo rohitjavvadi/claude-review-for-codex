@@ -16,6 +16,8 @@ Use it when you want:
 - Claude-written experiments that cannot touch your main checkout unless Codex accepts them
 - review artifacts you can inspect, replay, and audit instead of hidden chat-only output
 
+Read the short walkthrough: [docs/DEMO.md](docs/DEMO.md).
+
 ## Why It Matters
 
 This is an Experimental v0.1 release. The safety and orchestration paths are covered by tests with fake Claude output, but real review quality still depends on Claude Code, repository context, prompts, and account limits.

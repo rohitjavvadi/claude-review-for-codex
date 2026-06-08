@@ -37,3 +37,43 @@ The safety model is the point:
 Useful if you want a second model for code review without giving another agent uncontrolled access to your checkout.
 
 Repo: https://github.com/rohitjavvadi/claude-review-for-codex
+
+## X Post Options
+
+Use at most three posts for the first launch wave.
+
+### Post 1
+
+```text
+I built Claude Review for Codex.
+
+It gives Codex a read-only Claude Code reviewer, plus an opt-in implementation mode where Claude can write only inside a disposable git worktree.
+
+Codex still reviews, tests, accepts/rejects, and stays the merge gate.
+
+https://github.com/rohitjavvadi/claude-review-for-codex
+```
+
+### Post 2
+
+```text
+The interesting part of multi-agent coding is not "two models touched the repo".
+
+It is the trust boundary.
+
+Claude Review for Codex lets Claude critique or draft isolated changes, but Codex owns the checkout and the merge decision.
+
+https://github.com/rohitjavvadi/claude-review-for-codex
+```
+
+### Post 3
+
+```text
+If you use Codex and Claude Code, I built a small bridge between them.
+
+Claude can run read-only reviews, adversarial checks, and disposable-worktree implementation attempts.
+
+Codex stays responsible for validation, tests, and merge.
+
+https://github.com/rohitjavvadi/claude-review-for-codex
+```

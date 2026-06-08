@@ -1,5 +1,10 @@
 # Claude Review for Codex
 
+[![Tests](https://img.shields.io/badge/tests-49%20passing-brightgreen)](#development)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Codex Plugin](https://img.shields.io/badge/Codex-plugin-black)](#quick-install)
+[![Claude Code](https://img.shields.io/badge/Claude-Code-orange)](#safety-contract)
+
 Give Codex a second opinion from Claude Code without giving up control of the repo.
 
 Claude Review for Codex is a local Codex plugin that lets Codex ask Claude Code for read-only code reviews, adversarial reviews, verification passes, and opt-in implementation attempts inside disposable git worktrees. Claude can critique or draft isolated changes; Codex remains the writer, tester, reviewer, merger, and final gate.

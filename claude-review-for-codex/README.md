@@ -1,41 +1,64 @@
 # Claude Review for Codex
 
-Experimental v0.1 Codex plugin for asking Claude Code to review code read-only, plus an opt-in supervised implementation workflow.
+Give Codex a second opinion from Claude Code without giving up control of the repo.
 
-Claude Review for Codex is a local Codex plugin that lets Codex ask Claude Code for a read-only code review while Codex remains the normal writer and fixer. When explicitly invoked with `$cr:implement`, Claude can write only inside a disposable git worktree; Codex still reviews, tests, accepts or rejects, merges, and cleans up.
+Claude Review for Codex is a local Codex plugin that lets Codex ask Claude Code for read-only code reviews, adversarial reviews, verification passes, and opt-in implementation attempts inside disposable git worktrees. Claude can critique or draft isolated changes; Codex remains the writer, tester, reviewer, merger, and final gate.
 
-The plugin is intentionally simple:
+Use it when you want:
 
-- Codex collects a bounded, redacted review context.
-- Claude Code reviews that context with read-only tools.
-- Claude returns a human-readable Markdown review.
-- Codex validates any findings before acting.
-- Codex records decisions and applies fixes itself.
-- For `$cr:implement`, Claude writes only in an isolated worktree and Codex remains the merge gate.
+- a second model to review a diff before you ship it
+- adversarial checks for regressions, migrations, security, data loss, and rollback risk
+- Claude-written experiments that cannot touch your main checkout unless Codex accepts them
+- review artifacts you can inspect, replay, and audit instead of hidden chat-only output
+
+## Why It Matters
+
+This is an Experimental v0.1 release. The safety and orchestration paths are covered by tests with fake Claude output, but real review quality still depends on Claude Code, repository context, prompts, and account limits.
+
+AI coding gets stronger when agents can challenge each other. The unsafe version is giving every agent write access to the same checkout. This plugin takes the safer route:
+
+```text
+Codex owns the repo
+Claude reviews bounded context
+Claude can only write in an explicit disposable worktree
+Codex validates, tests, accepts or rejects, then records the decision
+```
+
+That makes it useful for serious projects where a second model is valuable, but automatic multi-agent editing is too risky.
+
+## What It Does
+
+- **Read-only Claude reviews** for normal `$cr:review`, `$cr:adversarial-review`, `$cr:review-fix`, and `$cr:verify` workflows.
+- **Disposable-worktree implementation** through `$cr:implement`, where Claude can write only in an isolated worktree.
+- **Codex merge gate** for every implementation attempt. Codex must inspect, test, and explicitly accept or reject the run.
+- **Scope guards** with `--allow`, `--deny`, and risky-file checks before acceptance.
+- **Redacted bounded context** so secrets and generated artifacts are not sent by default.
+- **Persistent artifacts** under `.codex/claude-reviews/` for reviews, decisions, logs, diffs, and verification output.
+- **Hooks included but disabled by default** so install never starts spending Claude credits automatically.
 
 ## Quick Install
 
-1. Clone this repo:
+Requirements:
+
+- Node.js 20+
+- Git
+- Claude Code CLI for live reviews
+- Codex app with local plugin marketplace support
+
+Clone the local marketplace repo:
 
 ```bash
 git clone https://github.com/rohitjavvadi/claude-review-for-codex.git
 cd claude-review-for-codex
-```
-
-2. Run the install doctor from the cloned repository root:
-
-```bash
 node scripts/doctor.mjs
 ```
 
-3. Copy the printed **Codex local marketplace path**.
+The doctor prints the **Codex local marketplace path**. In the Codex app:
 
-4. In the Codex app, open **Plugins**, add a **local marketplace**, paste that path, and install:
-
-```text
-claude-review-for-codex
-```
-
+1. Open **Plugins**.
+2. Add a **local marketplace**.
+3. Paste the path printed by `node scripts/doctor.mjs`.
+4. Install `claude-review-for-codex`.
 5. Open any repo in Codex and run:
 
 ```text
@@ -43,72 +66,51 @@ $cr:setup
 $cr:review
 ```
 
-For now, Codex local plugin install still needs that one Plugins UI step. The doctor script checks the repo shape and prints the exact path to paste.
+For now, Codex local plugin install still needs that one Plugins UI step. The doctor checks the repo shape and prints the exact path to paste.
 
-After the plugin is installed into Codex's local cache, the plugin's own `scripts/doctor.mjs` runs in diagnostics mode only. Use the root doctor above when adding or refreshing the local marketplace.
+## Common Workflows
 
-## Why This Exists
-
-Codex is excellent at implementing fixes, but a second model can be useful for adversarial review, regression hunting, security checks, migration risk, test-gap discovery, and opt-in implementation attempts in isolation. This plugin gives Codex a Claude reviewer by default and a supervised Claude implementer only when explicitly requested.
-
-## Release Status
-
-This is an experimental v0.1 release. The core safety and orchestration paths are covered by tests with fake Claude output, but real Claude review quality depends on the model, prompt, repository context, and account limits. Treat Claude output as advisory evidence, not an automatic gate.
-
-## Safety Contract
-
-- Claude is advisory only for review, adversarial-review, review-fix, and verify.
-- Claude must never edit, write, patch, stage, commit, install packages, or run arbitrary Bash in review workflows.
-- `$cr:implement` is explicit opt-in for Claude writes, and those writes are confined to a disposable git worktree.
-- Codex is the only accepter, merger, committer in the original checkout, rejecter, and cleanup authority.
-- Reviews are Markdown-first. The plugin does not reject Claude output because of schema formatting drift.
-- Hooks are included but disabled by default.
-- No automatic Claude spending happens on install.
-- Review artifacts are saved under `.codex/claude-reviews/`.
-
-## Target Repository Ignore Rule
-
-The plugin writes runtime artifacts into the repository being reviewed under `.codex/claude-reviews/`. Add this to the target repository's `.gitignore` if it is not already ignored:
-
-```gitignore
-.codex/
-```
-
-If the target repo already uses `.codex/` for other checked-in config, ignore only the review artifacts:
-
-```gitignore
-.codex/claude-reviews/
-```
-
-You can also let setup add the narrower ignore entry explicitly:
+Ask Claude to review the current diff:
 
 ```text
-$cr:setup --add-gitignore
+$cr:review
 ```
 
-## Repository Layout
+Run a deeper adversarial review:
 
 ```text
-.agents/plugins/marketplace.json       Local Codex marketplace registration
-claude-review-for-codex/               Plugin root
-  .codex-plugin/plugin.json            Codex plugin manifest
-  assets/                              Plugin icon/logo assets
-  hooks/                               Optional hooks, disabled by default
-  schemas/decisions.schema.json        Decision artifact schema
-  scripts/                             Node CLI implementation
-  skills/                              Codex skills exposed as $cr:* workflows
-  tests/                               Node test suite
+$cr:adversarial-review
 ```
 
-## How It Appears In Codex
-
-After install, the plugin appears in Codex chats as:
+Have Claude review, then let Codex decide which findings are real:
 
 ```text
-[@claude-review-for-codex](plugin://claude-review-for-codex@local-claude-review-for-codex)
+$cr:review-fix
 ```
 
-The `local-...` part is only the local marketplace source name. It is not the public project name.
+Ask Claude to implement in a disposable worktree while Codex supervises:
+
+```text
+$cr:implement --allow "src/**" --test-cmd "npm test" "add focused tests for the parser"
+```
+
+Preview the merge plan:
+
+```bash
+node scripts/claude-review-for-codex.mjs implement-accept <run-id> --dry-run
+```
+
+Accept only after Codex reviews the diff and tests pass:
+
+```bash
+node scripts/claude-review-for-codex.mjs implement-accept <run-id> --tests-run "npm test passed"
+```
+
+Reject and clean up:
+
+```bash
+node scripts/claude-review-for-codex.mjs implement-reject <run-id> --reason "changed files outside scope"
+```
 
 ## Commands
 
@@ -127,7 +129,7 @@ $cr:result
 $cr:cancel
 ```
 
-You can also run the CLI directly from the plugin root:
+The CLI can also be run directly from the plugin root:
 
 ```bash
 node scripts/claude-review-for-codex.mjs setup
@@ -154,13 +156,18 @@ node scripts/claude-review-for-codex.mjs result
 - `deep`: wider context, explicit opt-in.
 - `adversarial`: security, rollback, data loss, migrations, race conditions, and high-cost failure paths.
 
-## Claude Models
+## Safety Contract
 
-`--model` accepts Claude Code aliases such as `sonnet`, `opus`, `haiku`, and `opusplan`. It also accepts friendly Claude 4 family names such as `opus 4.8`, `Claude Opus 4.8`, or `claude-opus-4.8` and normalizes them to Claude Code's compact model form, such as `claude-opus-4-8`.
+- Claude is advisory only for review, adversarial-review, review-fix, and verify.
+- Claude must never edit, write, patch, stage, commit, install packages, or run arbitrary Bash in review workflows.
+- `$cr:implement` is explicit opt-in for Claude writes, and those writes are confined to a disposable git worktree.
+- Codex is the only accepter, merger, committer in the original checkout, rejecter, and cleanup authority.
+- Reviews are Markdown-first. The plugin does not reject Claude output because of schema formatting drift.
+- Hooks are included but disabled by default.
+- No automatic Claude spending happens on install.
+- Review artifacts are saved under `.codex/claude-reviews/`.
 
-## Claude Permissions
-
-Claude is invoked through `claude -p` with:
+Claude is invoked through `claude -p` with read-only tools for review:
 
 ```text
 Read, Glob, Grep, LS
@@ -172,44 +179,7 @@ Write-capable and risky tools are explicitly disallowed:
 Edit, Write, MultiEdit, NotebookEdit, Bash, WebFetch, WebSearch
 ```
 
-The runner also uses `--permission-mode dontAsk`, `--no-session-persistence`, and `--disallowedTools` when supported by the installed Claude CLI.
-
-`$cr:implement` is the explicit exception. It creates a disposable git worktree and lets Claude use `Edit`, `Write`, and `MultiEdit` only inside that isolated worktree. Claude is still denied `Bash`, `WebFetch`, `WebSearch`, and `NotebookEdit`, streaming supervision is enabled by default, and Codex remains the merge gate.
-
-## Repository Instructions
-
-The context collector automatically includes bounded, redacted repository instruction files when present:
-
-- nearest `AGENTS.md` from the review working directory upward
-- Markdown files referenced from that `AGENTS.md`, such as `CLAUDE.md`
-- root Claude instruction files: `CLAUDE.md`, `claude.md`, `.claude/CLAUDE.md`, `.claude/claude.md`
-
-These files are stored in `context.json` under `repo_instructions`. They are included even when unchanged, so Claude sees the repo's review rules without needing the whole repository.
-
-## Codex Context Injection
-
-The review skills now create a small Codex-authored context file before calling Claude, then pass it with:
-
-```bash
---codex-context-file .codex/claude-reviews/input/codex-context.md
-```
-
-This is the bridge between Codex's live chat understanding and Claude's read-only review. It helps when the repository has no `CLAUDE.md`, no useful git history, or when the user asked for a review target that is clearer in the conversation than in the diff.
-
-The file should stay concise:
-
-```markdown
-# Codex Context
-
-User request: review the last three commits for sync regressions.
-Review target: HEAD~3..HEAD.
-Codex summary: changed matching logic and report generation.
-Checks run: npm test passed.
-Known concerns: stale artifacts should not be included in review context.
-Claude focus: data loss, skipped records, rollback safety, missing tests.
-```
-
-The plugin redacts likely secrets from this file, injects the redacted text into the prompt, and saves the injected copy as `codex-context.md` in the review artifact directory.
+`$cr:implement` is the explicit exception. It creates a disposable git worktree and lets Claude use `Edit`, `Write`, and `MultiEdit` only inside that isolated worktree. Claude is still denied `Bash`, `WebFetch`, `WebSearch`, and `NotebookEdit`; streaming supervision is enabled by default; Codex remains the merge gate.
 
 ## Artifacts
 
@@ -217,7 +187,7 @@ Created by `review` and `adversarial-review`:
 
 ```text
 .codex/claude-reviews/<review-id>/
-  codex-context.md              optional, when --codex-context-file is used
+  codex-context.md
   context.json
   prompt.md
   raw-output.txt
@@ -237,7 +207,7 @@ Created by `verify`:
 ```text
 .codex/claude-reviews/<review-id>/
   raw-verification-output.txt
-  verification-codex-context.md optional, when --codex-context-file is used
+  verification-codex-context.md
   verification.md
 ```
 
@@ -246,54 +216,75 @@ Created by `implement`:
 ```text
 .codex/claude-reviews/implement-runs/<run-id>/
   claude.diff
-  codex-context.md              optional, when --codex-context-file is used
+  codex-context.md
   decision.json
   diff-stat.txt
-  events.ndjson                 stream-json events, when streaming is enabled
-  live.log                      readable live stream summary
+  events.ndjson
+  live.log
   prompt.md
   raw-output.txt
   risk-summary.json
-  stderr.log                    Claude stderr, when streaming is enabled
+  stderr.log
   summary.json
   test-results.json
 ```
 
-`context.json` is the redacted payload sent to Claude. `raw-output.txt` is Claude's exact review or implementation summary. `review.md` is the readable review shown to Codex and the user. `summary.json` includes the plugin name and version for new artifacts so older renamed-plugin history can be identified. `decisions.json` records which findings Codex accepted, rejected, or deferred. `decision.json` records whether a supervised implementation run was accepted or rejected.
+`context.json` is the redacted payload sent to Claude. `raw-output.txt` is Claude's exact review or implementation summary. `review.md` is the readable review shown to Codex and the user. `decisions.json` records which findings Codex accepted, rejected, or deferred. `decision.json` records whether a supervised implementation run was accepted or rejected.
 
 `status` groups current plugin reviews separately from legacy or unknown artifacts. Use `status --current-plugin` when old renamed-plugin history makes the list noisy.
 
-## Review-Fix Workflow
+## Repository Instructions
 
-`$cr:review-fix` runs a Claude review and creates a `decisions.json` template. Codex must then:
+The context collector automatically includes bounded, redacted repository instruction files when present:
 
-1. Inspect each Claude finding.
-2. Accept, reject, or defer it with a reason.
-3. Apply accepted fixes itself.
-4. Run targeted tests.
-5. Update `decisions.json`.
-6. Optionally run `$cr:verify`.
+- nearest `AGENTS.md` from the review working directory upward
+- Markdown files referenced from that `AGENTS.md`, such as `CLAUDE.md`
+- root Claude instruction files: `CLAUDE.md`, `claude.md`, `.claude/CLAUDE.md`, `.claude/claude.md`
 
-Claude suggestions are advisory, not patches.
+These files are included even when unchanged, so Claude sees the repo's review rules without needing the whole repository.
 
-## Codex-Supervised Claude Implementation
+## Codex Context Injection
 
-`$cr:implement` lets Claude write code in a disposable git worktree while Codex supervises the result. It is intentionally a two-step gate: Claude can produce a diff, but Codex must inspect, test, and explicitly accept or reject it. Streaming is the default, so Codex can watch Claude's tool calls as `events.ndjson` and `live.log` are written.
+The review skills create a small Codex-authored context file before calling Claude, then pass it with:
 
-Typical flow:
+```bash
+--codex-context-file .codex/claude-reviews/input/codex-context.md
+```
 
-1. Codex runs `$cr:implement <task>`.
-2. The CLI creates a disposable worktree on a throwaway branch.
-3. Claude implements inside that worktree with write tools enabled.
-4. The CLI streams `events.ndjson` and `live.log`, then saves `claude.diff`, `risk-summary.json`, `test-results.json`, `summary.json`, `raw-output.txt`, and a pending `decision.json`.
-5. Codex inspects every changed file and runs targeted checks in the worktree. `--test-cmd "<cmd>"` can run checks automatically after Claude exits.
-6. Scope guards can block risky edits: use `--allow "<glob>"`, `--deny "<glob>"`, and `--allow-risky` for package metadata, lockfiles, migrations, or CI workflows when those are expected.
-7. `implement-status <run-id>` shows the current status, event count, recent live log, changed files, and next suggested command.
-8. `implement-accept <run-id> --dry-run` previews the commit, merge, and cleanup plan without changing main.
-9. If accepted, Codex runs `implement-accept <run-id> --tests-run "<checks>"`. The CLI commits the worktree branch, fast-forward merges it into the original checkout, then removes the worktree and branch.
-10. If rejected, Codex runs `implement-reject <run-id> --reason "<why>"`. The CLI force-removes the dirty worktree and deletes the throwaway branch.
+This bridges Codex's live chat understanding into Claude's read-only review. It helps when the repository has no useful instruction file, no useful git history, or the user request is clearer in the conversation than in the diff.
 
-Do not accept a run just because Claude completed successfully. The safety property is the Codex review step between `implement` and `implement-accept`.
+Example:
+
+```markdown
+# Codex Context
+
+User request: review the last three commits for sync regressions.
+Review target: HEAD~3..HEAD.
+Codex summary: changed matching logic and report generation.
+Checks run: npm test passed.
+Known concerns: stale artifacts should not be included in review context.
+Claude focus: data loss, skipped records, rollback safety, missing tests.
+```
+
+## Target Repository Ignore Rule
+
+The plugin writes runtime artifacts into the repository being reviewed under `.codex/claude-reviews/`. Add this to the target repository's `.gitignore` if it is not already ignored:
+
+```gitignore
+.codex/
+```
+
+If the target repo already uses `.codex/` for checked-in config, ignore only the review artifacts:
+
+```gitignore
+.codex/claude-reviews/
+```
+
+You can also let setup add the narrower ignore entry:
+
+```text
+$cr:setup --add-gitignore
+```
 
 ## Privacy And Billing
 
@@ -310,20 +301,37 @@ Because of that:
 
 ## Development
 
-Requirements:
-
-- Node.js 20+
-- Git
-- Claude Code CLI for live reviews
-
 Run tests:
 
 ```bash
-cd claude-review-for-codex
 npm test
 ```
 
 The test suite uses fake Claude output via `CR_FAKE_CLAUDE_RESULT`, so tests do not spend Claude credits.
+
+## Repository Layout
+
+```text
+../.agents/plugins/marketplace.json    Local Codex marketplace registration
+.codex-plugin/plugin.json              Codex plugin manifest
+assets/                                Plugin icon/logo assets
+hooks/                                 Optional hooks, disabled by default
+schemas/decisions.schema.json          Decision artifact schema
+scripts/                               Node CLI implementation
+skills/                                Codex skills exposed as $cr:* workflows
+tests/                                 Node test suite
+```
+
+## Contributing
+
+Issues and pull requests are welcome. The highest-value areas are safer context collection, better review prompts, clearer artifacts, stronger scope guards, and smoother local marketplace installation.
+
+Before opening a PR:
+
+```bash
+npm test
+node scripts/doctor.mjs
+```
 
 ## License
 

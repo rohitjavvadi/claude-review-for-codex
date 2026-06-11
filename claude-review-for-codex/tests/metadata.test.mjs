@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { PLUGIN_ROOT } from "./helpers.mjs";
 
 test("plugin metadata has required paths and no placeholders", () => {
@@ -56,3 +58,37 @@ test("root install doctor exists", () => {
     assert.match(fs.readFileSync(rootDoctor, "utf8"), /Codex local marketplace path/);
   }
 });
+
+test("root install doctor tolerates a missing optional Claude CLI", () => {
+  const repoRoot = path.dirname(PLUGIN_ROOT);
+  const rootDoctor = path.join(repoRoot, "scripts", "doctor.mjs");
+  const marketplacePath = path.join(repoRoot, ".agents", "plugins", "marketplace.json");
+  if (!fs.existsSync(marketplacePath)) return;
+
+  const gitPath = spawnSync("sh", ["-lc", "command -v git"], { encoding: "utf8" }).stdout.trim();
+  assert.ok(gitPath);
+
+  const tempBin = fs.mkdtempSync(path.join(os.tmpdir(), "crfc-doctor-bin-"));
+  try {
+    writeShim(path.join(tempBin, "node"), process.execPath);
+    writeShim(path.join(tempBin, "git"), gitPath);
+
+    const result = spawnSync(process.execPath, [rootDoctor], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      env: { ...process.env, PATH: tempBin },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /ok: node/);
+    assert.match(result.stdout, /ok: git/);
+    assert.match(result.stdout, /optional missing: claude/);
+  } finally {
+    fs.rmSync(tempBin, { recursive: true, force: true });
+  }
+});
+
+function writeShim(file, target) {
+  fs.writeFileSync(file, `#!/bin/sh\nexec "${target}" "$@"\n`);
+  fs.chmodSync(file, 0o755);
+}

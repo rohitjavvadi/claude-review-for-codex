@@ -75,7 +75,7 @@ function checkFile(name, file, required = true, missingDetail = "") {
 
 function checkCommand(name, args, required) {
   const result = spawnSync(name, args, { encoding: "utf8" });
-  const output = result.stdout.trim() || result.stderr.trim();
+  const output = (result.stdout ?? "").trim() || (result.stderr ?? "").trim() || result.error?.message || "";
   return {
     name,
     ok: result.status === 0,

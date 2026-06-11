@@ -1,6 +1,6 @@
 {
   "name": "claude-review-for-codex",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Codex plugin for Claude Code reviews and live-supervised disposable-worktree implementation.",
   "type": "module",
   "author": "Rohit Javvadi",
@@ -17,7 +17,11 @@
     "claude",
     "code-review",
     "codex-plugin",
-    "claude-code"
+    "claude-code",
+    "ai-agents",
+    "developer-tools",
+    "multi-agent",
+    "worktree"
   ],
   "bin": {
     "claude-review-for-codex": "./scripts/claude-review-for-codex.mjs"

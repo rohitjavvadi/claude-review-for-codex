@@ -1,6 +1,6 @@
 {
   "name": "claude-review-for-codex",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Experimental read-only Claude Code reviews and live-supervised disposable-worktree implementation for Codex.",
   "author": {
     "name": "Rohit Javvadi",

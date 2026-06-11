@@ -22,6 +22,10 @@ test("README documents billing and hook defaults", () => {
   assert.match(readme, /June 15, 2026/);
   assert.match(readme, /Hooks are disabled by default/);
   assert.match(readme, /max-budget-usd/);
+  assert.match(readme, /fable 5/);
+  assert.match(readme, /fallback-model/);
+  assert.match(readme, /--effort low\|medium\|high\|xhigh\|max\|ultracode/);
+  assert.match(readme, /--workflow/);
   assert.match(readme, /Claude is advisory only/);
   assert.match(readme, /Add this to the target repository's `.gitignore`/);
   assert.match(readme, /\$cr:setup --add-gitignore/);

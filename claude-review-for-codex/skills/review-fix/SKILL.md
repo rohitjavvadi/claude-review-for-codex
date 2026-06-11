@@ -33,6 +33,6 @@ Then Codex must:
 
 Never blindly apply Claude suggestions. Treat Claude output as advisory evidence.
 
-Friendly model names are supported. If the user asks for "opus 4.7", pass `--model "opus 4.7"` or `--model opus 4.7`; the CLI normalizes it before invoking Claude Code.
+Friendly model names are supported. If the user asks for "fable", "fable 5", "opus 4.8", or "haiku 4.5", pass that value with `--model`; the CLI normalizes it before invoking Claude Code. Preserve `--fallback-model`, `--effort`, `--workflow`, and `--ultracode` when the user explicitly asks for Fable fallback, higher effort, dynamic workflows, or ultracode.
 
 If the user supplies `--codex-context-file`, use their file path instead of creating/passing the default one.

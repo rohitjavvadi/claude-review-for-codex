@@ -51,6 +51,8 @@ test("top-level help includes current review flags", () => {
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /--max-turns <n>/);
   assert.match(result.stdout, /--max-budget-usd <amount>/);
+  assert.match(result.stdout, /--effort low\|medium\|high\|xhigh\|max\|ultracode/);
+  assert.match(result.stdout, /--workflow\|--ultracode/);
   assert.match(result.stdout, /review .*--json/);
   assert.match(result.stdout, /implement .*--stream/);
   assert.match(result.stdout, /implement-status <run-id>/);
@@ -68,6 +70,12 @@ test("invalid scope and numeric flags fail clearly in JSON mode", () => {
   const maxTurns = runCli(["estimate", "--max-turns", "abc", "--json"], repo);
   assert.notEqual(maxTurns.status, 0);
   assert.match(JSON.parse(maxTurns.stdout).error.message, /--max-turns/);
+
+  const effort = runCli(["review", "--effort", "banana", "--json"], repo, {
+    CR_FAKE_CLAUDE_RESULT: FAKE_REVIEW,
+  });
+  assert.notEqual(effort.status, 0);
+  assert.match(JSON.parse(effort.stdout).error.message, /Invalid --effort/);
 });
 
 test("review with fake Claude creates Markdown artifacts", () => {
@@ -86,7 +94,7 @@ test("review with fake Claude creates Markdown artifacts", () => {
   assert.ok(fs.existsSync(path.join(payload.artifactDir, "summary.json")));
   const summary = JSON.parse(fs.readFileSync(path.join(payload.artifactDir, "summary.json"), "utf8"));
   assert.equal(summary.pluginName, "claude-review-for-codex");
-  assert.equal(summary.pluginVersion, "0.1.4");
+  assert.equal(summary.pluginVersion, "0.1.5");
 });
 
 test("review accepts unquoted friendly model version", () => {
@@ -100,6 +108,35 @@ test("review accepts unquoted friendly model version", () => {
   const summary = JSON.parse(fs.readFileSync(path.join(payload.artifactDir, "summary.json"), "utf8"));
   assert.equal(payload.model, "claude-opus-4-7");
   assert.equal(summary.model, "claude-opus-4-7");
+});
+
+test("review supports Fable, fallback model, effort, and workflow prompt artifacts", () => {
+  const repo = tempRepo("crg-review-fable-workflow");
+  fs.writeFileSync(path.join(repo, "x.txt"), "x\n");
+  const result = runCli([
+    "review",
+    "--model",
+    "fable",
+    "5",
+    "--fallback-model",
+    "opus",
+    "4.8",
+    "--effort",
+    "ultracode",
+    "--json"
+  ], repo, {
+    CR_FAKE_CLAUDE_RESULT: FAKE_REVIEW,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  const summary = JSON.parse(fs.readFileSync(path.join(payload.artifactDir, "summary.json"), "utf8"));
+  const prompt = fs.readFileSync(path.join(payload.artifactDir, "prompt.md"), "utf8");
+  assert.equal(summary.model, "claude-fable-5");
+  assert.equal(summary.fallbackModel, "claude-opus-4-8");
+  assert.equal(summary.effort, "xhigh");
+  assert.equal(summary.workflow, true);
+  assert.equal(summary.ultracode, true);
+  assert.match(prompt, /^ultracode:/);
 });
 
 test("review injects Codex context file into prompt and artifacts", () => {
@@ -195,6 +232,50 @@ test("implement accept creates isolated worktree artifacts, merges, and cleans u
   assert.equal(run("git", ["branch", "--list", "codex/test-accept"], repo).stdout.trim(), "");
   assert.match(fs.readFileSync(path.join(repo, "docs", "claude.md"), "utf8"), /accepted by fake Claude/);
   assert.match(run("git", ["log", "-1", "--oneline"], repo).stdout, /Accept fake Claude implementation/);
+});
+
+test("implement records Fable workflow and ultracode execution settings", () => {
+  const repo = tempRepo("crg-implement-ultracode");
+  fs.writeFileSync(path.join(repo, ".gitignore"), ".codex/\n");
+  fs.writeFileSync(path.join(repo, "README.md"), "# Test\n");
+  run("git", ["add", "."], repo);
+  run("git", ["commit", "-m", "initial"], repo);
+  const worktree = path.join(path.dirname(repo), `${path.basename(repo)}-ultracode-worktree`);
+
+  const result = runCli([
+    "implement",
+    "--worktree-dir",
+    worktree,
+    "--branch",
+    "codex/test-ultracode",
+    "--model",
+    "fable",
+    "5",
+    "--fallback-model",
+    "opus",
+    "4.8",
+    "--ultracode",
+    "--json",
+    "Create a docs note with workflow settings"
+  ], repo, {
+    CR_FAKE_CLAUDE_RESULT: "Created docs/workflow.md.",
+    CR_FAKE_CLAUDE_WRITE_FILE: "docs/workflow.md",
+    CR_FAKE_CLAUDE_WRITE_CONTENT: "# Workflow\n",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  const prompt = fs.readFileSync(path.join(payload.artifactDir, "prompt.md"), "utf8");
+  assert.equal(payload.model, "claude-fable-5");
+  assert.equal(payload.fallbackModel, "claude-opus-4-8");
+  assert.equal(payload.effort, "xhigh");
+  assert.equal(payload.workflow, true);
+  assert.equal(payload.ultracode, true);
+  assert.match(prompt, /^ultracode:/);
+  assert.match(prompt, /Dynamic workflow requested: ultracode/);
+
+  const reject = runCli(["implement-reject", payload.runId, "--reason", "test cleanup", "--json"], repo);
+  assert.equal(reject.status, 0, reject.stderr);
+  assert.equal(fs.existsSync(worktree), false);
 });
 
 test("implement reject discards dirty worktree and leaves main unchanged", () => {
@@ -512,7 +593,7 @@ test("status rendering marks current and legacy review artifacts", () => {
   fs.writeFileSync(path.join(root, "current-review", "summary.json"), JSON.stringify({
     reviewId: "current-review",
     pluginName: "claude-review-for-codex",
-    pluginVersion: "0.1.4",
+    pluginVersion: "0.1.5",
     status: "completed",
     mode: "standard",
     createdAt: "2026-05-14T01:00:00.000Z"
@@ -528,7 +609,7 @@ test("status rendering marks current and legacy review artifacts", () => {
   assert.equal(status.status, 0, status.stderr);
   assert.match(status.stdout, /Current Plugin Reviews:/);
   assert.match(status.stdout, /Legacy\/Unknown Review Artifacts:/);
-  assert.match(status.stdout, /current-review: completed \(claude-review-for-codex@0\.1\.4, standard\)/);
+  assert.match(status.stdout, /current-review: completed \(claude-review-for-codex@0\.1\.5, standard\)/);
   assert.match(status.stdout, /legacy-review: completed \(legacy\/unknown plugin, cheap\)/);
 
   const filtered = runCli(["status", "--current-plugin", "--json"], repo);

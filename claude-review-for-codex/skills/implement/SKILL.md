@@ -28,6 +28,8 @@ When useful, add:
 - `--test-cmd "<command>"` for checks Codex should run after Claude exits.
 - `--timeout-ms <n>` for a hard runtime guard.
 - `--allow-risky` only when the user explicitly expects risky paths such as package metadata, migrations, or CI workflows.
+- `--model "fable 5" --fallback-model "opus 4.8"` when the user asks for Fable with an Opus fallback.
+- `--effort xhigh`, `--workflow`, or `--ultracode` only when the user explicitly asks for higher effort, a dynamic workflow, ultracode, or a codebase-scale implementation/audit. Workflow subagents inherit the same worktree, tool, and path-scope limits but can use many more tokens.
 
 Then Codex must:
 
@@ -62,5 +64,5 @@ Rules:
 - Do not run `implement-accept` until Codex has inspected the diff and run appropriate checks.
 - Respect `status: blocked`, `status: tests-failed`, and `risk-summary.json`; those runs should be rejected or rerun with explicit scope.
 - Always finish with either `implement-accept` or `implement-reject`; do not leave disposable worktrees around.
-- Friendly model names are supported. If the user asks for "opus 4.8", pass `--model "opus 4.8"` or `--model opus 4.8`; the CLI normalizes it before invoking Claude Code.
+- Friendly model names are supported. If the user asks for "fable", "fable 5", "opus 4.8", or "haiku 4.5", pass that value with `--model`; the CLI normalizes it before invoking Claude Code.
 - If the user supplies `--codex-context-file`, use their file path instead of creating/passing the default one.

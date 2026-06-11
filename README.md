@@ -135,9 +135,11 @@ node scripts/claude-review-for-codex.mjs estimate --mode standard
 node scripts/claude-review-for-codex.mjs review --mode standard
 node scripts/claude-review-for-codex.mjs review --model opus
 node scripts/claude-review-for-codex.mjs review --model "opus 4.8"
+node scripts/claude-review-for-codex.mjs review --model "fable 5" --fallback-model "opus 4.8" --effort high
+node scripts/claude-review-for-codex.mjs review --model fable --workflow --effort xhigh
 node scripts/claude-review-for-codex.mjs review --codex-context-file .codex/claude-reviews/input/codex-context.md
 node scripts/claude-review-for-codex.mjs review --background
-node scripts/claude-review-for-codex.mjs implement --allow "src/**" --test-cmd "npm test" "add focused tests for the parser"
+node scripts/claude-review-for-codex.mjs implement --model fable --ultracode --allow "src/**" --test-cmd "npm test" "add focused tests for the parser"
 node scripts/claude-review-for-codex.mjs implement-status <run-id>
 node scripts/claude-review-for-codex.mjs implement-accept <run-id> --dry-run
 node scripts/claude-review-for-codex.mjs implement-accept <run-id> --tests-run "npm test passed"
@@ -156,7 +158,13 @@ node scripts/claude-review-for-codex.mjs result
 
 ## Claude Models
 
-`--model` accepts Claude Code aliases such as `sonnet`, `opus`, `haiku`, and `opusplan`. It also accepts friendly Claude 4 family names such as `opus 4.8`, `Claude Opus 4.8`, or `claude-opus-4.8` and normalizes them to Claude Code's compact model form, such as `claude-opus-4-8`.
+`--model` accepts Claude Code aliases such as `fable`, `sonnet`, `opus`, `haiku`, and `opusplan`. It also accepts friendly Claude family names such as `fable 5`, `Claude Fable 5`, `opus 4.8`, `Claude Opus 4.8`, `haiku 4.5`, or `claude-opus-4.8` and normalizes them to Claude Code's compact model form, such as `claude-fable-5` or `claude-opus-4-8`.
+
+`--fallback-model <model[,model]>` passes Claude Code's fallback model list when the installed Claude CLI supports it. This is useful with Fable-oriented workflows where you want Claude Code to try a lower-cost or more available model such as `opus 4.8` if the primary model is unavailable. For Claude Fable 5 API safety refusals, Anthropic documents Opus 4.8 as the permitted fallback target; this plugin uses Claude Code, so it records the fallback model request but does not implement raw Messages API fallback credit itself.
+
+`--effort low|medium|high|xhigh|max|ultracode` passes Claude Code's effort level when supported. `extra` is accepted as an alias for `xhigh`. `--effort ultracode` and `--ultracode` request Claude Code dynamic workflow behavior and pass `xhigh` effort, because the non-interactive Claude Code CLI exposes `xhigh`/`max` effort values while the `ultracode` session setting is workflow-oriented.
+
+`--workflow` requests a Claude Code dynamic workflow for a single run by adding the `ultracode:` workflow trigger to the prompt. Use it for codebase-scale audits, large migrations, or cross-checked research. Workflows can spawn many agents and use more tokens, so the plugin never enables them by default.
 
 ## Claude Permissions
 

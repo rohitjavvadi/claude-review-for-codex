@@ -5,11 +5,28 @@ import { binaryAvailable, runCommand } from "./process.mjs";
 
 const MODEL_ALIASES = new Map([
   ["default", "default"],
+  ["fable", "fable"],
   ["sonnet", "sonnet"],
   ["opus", "opus"],
   ["haiku", "haiku"],
+  ["mythos", "claude-mythos-5"],
+  ["mythos preview", "claude-mythos-preview"],
   ["opusplan", "opusplan"],
   ["opus plan", "opusplan"],
+]);
+
+const EFFORT_ALIASES = new Map([
+  ["low", "low"],
+  ["medium", "medium"],
+  ["med", "medium"],
+  ["high", "high"],
+  ["extra", "xhigh"],
+  ["xhigh", "xhigh"],
+  ["x-high", "xhigh"],
+  ["max", "max"],
+  ["ultracode", "xhigh"],
+  ["ultra code", "xhigh"],
+  ["ultra-code", "xhigh"],
 ]);
 
 export function normalizeClaudeModel(model) {
@@ -27,20 +44,46 @@ export function normalizeClaudeModel(model) {
     .toLowerCase()
     .replace(/^claude\s+/, "")
     .replace(/[_-]+/g, " ");
-  const marketingName = /^(opus|sonnet)\s+(\d+)(?:[.\s]+(\d+))?(?:[.\s]+(\d+))?(\[1m\])?$/.exec(claudeShorthand);
+  const marketingName = /^(fable|mythos|opus|sonnet|haiku)\s+(\d+)(?:[.\s]+(\d+))?(?:[.\s]+(\d+))?(\[1m\])?$/.exec(claudeShorthand);
   if (marketingName) {
     const [, family, major, minor, patch, contextSuffix = ""] = marketingName;
     const versionParts = [major, minor, patch].filter(Boolean);
     return `claude-${family}-${versionParts.join("-")}${contextSuffix}`;
   }
 
-  const dottedClaudeName = /^claude-(opus|sonnet)-(\d+)\.(\d+)(.*)$/i.exec(raw);
+  const dottedClaudeName = /^claude-(fable|mythos|opus|sonnet|haiku)-(\d+)\.(\d+)(.*)$/i.exec(raw);
   if (dottedClaudeName) {
     const [, family, major, minor, suffix] = dottedClaudeName;
     return `claude-${family.toLowerCase()}-${major}-${minor}${suffix}`;
   }
 
   return raw;
+}
+
+export function normalizeClaudeModelList(models) {
+  if (models == null || models === "") return models;
+  const normalized = String(models)
+    .split(",")
+    .map((model) => normalizeClaudeModel(model.trim()))
+    .filter(Boolean);
+  return normalized.length ? normalized.join(",") : "";
+}
+
+export function normalizeClaudeEffort(effort) {
+  if (effort == null || effort === "") return effort;
+  const raw = String(effort).trim();
+  if (!raw) return raw;
+  const alias = EFFORT_ALIASES.get(raw.toLowerCase().replace(/\s+/g, " "));
+  if (!alias) {
+    throw new Error(`Invalid --effort "${effort}". Use low, medium, high, xhigh, max, or ultracode.`);
+  }
+  return alias;
+}
+
+export function isUltracodeEffort(effort) {
+  if (effort == null || effort === "") return false;
+  const normalized = String(effort).trim().toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ");
+  return normalized === "ultracode" || normalized === "ultra code";
 }
 
 export function getClaudeStatus(cwd = process.cwd()) {
@@ -82,7 +125,7 @@ const REQUIRED_FLAGS = [
   "--no-session-persistence",
 ];
 
-const OPTIONAL_FLAGS = ["--output-format", "--max-turns", "--bare", "--model", "--max-budget-usd"];
+const OPTIONAL_FLAGS = ["--output-format", "--max-turns", "--bare", "--model", "--max-budget-usd", "--effort", "--fallback-model"];
 
 export function getClaudeCapabilities(cwd = process.cwd()) {
   const help = runCommand("claude", ["--help"], { cwd, maxBuffer: 512 * 1024 });
@@ -107,6 +150,8 @@ export function assertClaudeCapabilities(cwd = process.cwd()) {
 
 export function buildClaudeArgs({
   model,
+  effort,
+  fallbackModel,
   maxTurns,
   maxBudgetUsd,
   authMode = "subscription-cli",
@@ -124,6 +169,12 @@ export function buildClaudeArgs({
   }
   if (model && supports("--model")) {
     args.push("--model", normalizeClaudeModel(model));
+  }
+  if (effort && supports("--effort")) {
+    args.push("--effort", normalizeClaudeEffort(effort));
+  }
+  if (fallbackModel && supports("--fallback-model")) {
+    args.push("--fallback-model", normalizeClaudeModelList(fallbackModel));
   }
   if (maxTurns && supports("--max-turns")) {
     args.push("--max-turns", String(maxTurns));
@@ -147,6 +198,8 @@ export async function runClaudeText({
   cwd,
   prompt,
   model,
+  effort,
+  fallbackModel,
   maxTurns,
   maxBudgetUsd,
   authMode,
@@ -174,7 +227,7 @@ export async function runClaudeText({
     );
   }
 
-  const args = buildClaudeArgs({ model, maxTurns, maxBudgetUsd, authMode, tools, disallowedTools, capabilities: status.capabilities });
+  const args = buildClaudeArgs({ model, effort, fallbackModel, maxTurns, maxBudgetUsd, authMode, tools, disallowedTools, capabilities: status.capabilities });
   return await new Promise((resolve, reject) => {
     const child = spawn("claude", args, {
       cwd,
@@ -213,6 +266,8 @@ export async function runClaudeStream({
   cwd,
   prompt,
   model,
+  effort,
+  fallbackModel,
   maxTurns,
   maxBudgetUsd,
   authMode,
@@ -274,7 +329,7 @@ export async function runClaudeStream({
   }
 
   fs.mkdirSync(path.dirname(eventsFile), { recursive: true });
-  const args = buildClaudeArgs({ model, maxTurns, maxBudgetUsd, authMode, tools, disallowedTools, capabilities: status.capabilities });
+  const args = buildClaudeArgs({ model, effort, fallbackModel, maxTurns, maxBudgetUsd, authMode, tools, disallowedTools, capabilities: status.capabilities });
   args.push("--output-format", "stream-json", "--verbose", "--include-partial-messages");
   removeFirstOutputFormatText(args);
 

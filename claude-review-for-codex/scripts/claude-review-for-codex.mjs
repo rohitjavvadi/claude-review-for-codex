@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import { loadConfig, resolveMode, saveConfig } from "./lib/config.mjs";
 import { collectReviewContext, ensureGitRepository, estimateContext } from "./lib/git.mjs";
-import { getClaudeStatus, normalizeClaudeModel, runClaudeStream, runClaudeText } from "./lib/claude.mjs";
+import { getClaudeStatus, isUltracodeEffort, normalizeClaudeEffort, normalizeClaudeModel, normalizeClaudeModelList, runClaudeStream, runClaudeText } from "./lib/claude.mjs";
 import { buildReviewPrompt, buildVerificationPrompt } from "./lib/prompts.mjs";
 import { validateDecisions } from "./lib/schema.mjs";
 import { artifactRoot, createReviewId, latestReview, listReviews, readJson, reviewDir, safeId, writeJson, writeReviewArtifacts } from "./lib/artifacts.mjs";
@@ -17,7 +17,7 @@ import { redactText } from "./lib/redaction.mjs";
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const MAX_CODEX_CONTEXT_BYTES = 128 * 1024;
 const PLUGIN_NAME = "claude-review-for-codex";
-const PLUGIN_VERSION = "0.1.4";
+const PLUGIN_VERSION = "0.1.5";
 const IMPLEMENT_WRITE_TOOLS = ["Read", "Glob", "Grep", "LS", "Edit", "Write", "MultiEdit"];
 const IMPLEMENT_DENIED_TOOLS = ["NotebookEdit", "Bash", "WebFetch", "WebSearch"];
 const DEFAULT_IMPLEMENT_DENY_PATTERNS = [
@@ -106,14 +106,14 @@ function usage() {
 const COMMAND_USAGE = {
   setup: "Usage: claude-review-for-codex setup [--enable-hooks|--disable-hooks] [--add-gitignore] [--auth-mode subscription-cli|api-key] [--max-budget-usd <amount>|--clear-budget] [--json]",
   estimate: "Usage: claude-review-for-codex estimate [--mode cheap|standard|deep|adversarial] [--base <ref>] [--scope working-tree|branch] [--max-turns <n>] [--max-budget-usd <amount>] [--json]",
-  review: "Usage: claude-review-for-codex review [--background] [--mode cheap|standard|deep] [--base <ref>] [--scope working-tree|branch] [--codex-context-file <path>] [--model <model>] [--max-turns <n>] [--max-budget-usd <amount>] [--json]",
-  "adversarial-review": "Usage: claude-review-for-codex adversarial-review [--background] [--base <ref>] [--scope working-tree|branch] [--codex-context-file <path>] [--model <model>] [--max-turns <n>] [--max-budget-usd <amount>] [--json] [focus text]",
+  review: "Usage: claude-review-for-codex review [--background] [--mode cheap|standard|deep] [--base <ref>] [--scope working-tree|branch] [--codex-context-file <path>] [--model <model>] [--fallback-model <model[,model]>] [--effort low|medium|high|xhigh|max|ultracode] [--workflow|--ultracode] [--max-turns <n>] [--max-budget-usd <amount>] [--json]",
+  "adversarial-review": "Usage: claude-review-for-codex adversarial-review [--background] [--base <ref>] [--scope working-tree|branch] [--codex-context-file <path>] [--model <model>] [--fallback-model <model[,model]>] [--effort low|medium|high|xhigh|max|ultracode] [--workflow|--ultracode] [--max-turns <n>] [--max-budget-usd <amount>] [--json] [focus text]",
   "review-fix": "Usage: claude-review-for-codex review-fix [--review-id <id>] [--codex-context-file <path>] [review args...] [--json]",
-  implement: "Usage: claude-review-for-codex implement [--stream|--no-stream] [--allow <glob>] [--deny <glob>] [--allow-risky] [--test-cmd <cmd>] [--timeout-ms <n>] [--codex-context-file <path>] [--worktree-dir <path>] [--branch <name>] [--model <model>] [--max-turns <n>] [--max-budget-usd <amount>] [--json] <task>",
+  implement: "Usage: claude-review-for-codex implement [--stream|--no-stream] [--allow <glob>] [--deny <glob>] [--allow-risky] [--test-cmd <cmd>] [--timeout-ms <n>] [--codex-context-file <path>] [--worktree-dir <path>] [--branch <name>] [--model <model>] [--fallback-model <model[,model]>] [--effort low|medium|high|xhigh|max|ultracode] [--workflow|--ultracode] [--max-turns <n>] [--max-budget-usd <amount>] [--json] <task>",
   "implement-status": "Usage: claude-review-for-codex implement-status <run-id> [--json]",
   "implement-accept": "Usage: claude-review-for-codex implement-accept <run-id> [--message <commit message>] [--tests-run <summary>] [--test-cmd <cmd>] [--review-note <note>] [--dry-run] [--keep-worktree] [--json]",
   "implement-reject": "Usage: claude-review-for-codex implement-reject <run-id> [--reason <reason>] [--json]",
-  verify: "Usage: claude-review-for-codex verify [review-id] [--review-id <id>] [--mode cheap|standard|deep] [--codex-context-file <path>] [--model <model>] [--max-turns <n>] [--max-budget-usd <amount>] [--json]",
+  verify: "Usage: claude-review-for-codex verify [review-id] [--review-id <id>] [--mode cheap|standard|deep] [--codex-context-file <path>] [--model <model>] [--fallback-model <model[,model]>] [--effort low|medium|high|xhigh|max|ultracode] [--workflow|--ultracode] [--max-turns <n>] [--max-budget-usd <amount>] [--json]",
   status: "Usage: claude-review-for-codex status [--current-plugin] [--limit <n>] [--json]",
   result: "Usage: claude-review-for-codex result [review-id|job-id] [--json]",
   cancel: "Usage: claude-review-for-codex cancel <job-id> [--json]",
@@ -132,7 +132,7 @@ function parseArgs(argv) {
       continue;
     }
     const key = arg.slice(2);
-    if (["json", "background", "stream", "no-stream", "allow-risky", "dry-run", "enable-hooks", "disable-hooks", "clear-budget", "add-gitignore", "current-plugin", "keep-worktree", "help", "h"].includes(key)) {
+    if (["json", "background", "stream", "no-stream", "workflow", "ultracode", "allow-risky", "dry-run", "enable-hooks", "disable-hooks", "clear-budget", "add-gitignore", "current-plugin", "keep-worktree", "help", "h"].includes(key)) {
       options[key] = true;
       continue;
     }
@@ -141,7 +141,7 @@ function parseArgs(argv) {
     if (["allow", "deny", "test-cmd"].includes(key)) {
       if (!Array.isArray(options[key])) options[key] = [];
       options[key].push(value);
-    } else if (key === "model" && isModelVersionSuffix(argv[i + 1])) {
+    } else if ((key === "model" || key === "fallback-model") && isModelVersionSuffix(argv[i + 1])) {
       options[key] = `${value} ${argv[++i]}`;
     } else {
       options[key] = value;
@@ -152,6 +152,28 @@ function parseArgs(argv) {
 
 function isModelVersionSuffix(value) {
   return typeof value === "string" && !value.startsWith("--") && /^\d+(?:[._-]\d+){0,2}(?:\[1m\])?$/.test(value);
+}
+
+function resolveClaudeExecutionOptions(options) {
+  const rawEffort = options.effort;
+  const ultracode = options.ultracode === true || isUltracodeEffort(rawEffort);
+  const effort = ultracode ? "xhigh" : normalizeClaudeEffort(rawEffort ?? null);
+  return {
+    effort: effort || null,
+    fallbackModel: normalizeClaudeModelList(options["fallback-model"] ?? null) || null,
+    workflow: options.workflow === true || ultracode,
+    ultracode,
+  };
+}
+
+function applyWorkflowPrompt(prompt, execution) {
+  if (!execution.workflow) return prompt;
+  return [
+    "ultracode: Run this request as a Claude Code dynamic workflow when the task warrants it.",
+    "Preserve the safety, permission, scope, and output constraints in the prompt below.",
+    "",
+    prompt,
+  ].join("\n");
 }
 
 function repoRootFromCwd() {
@@ -244,6 +266,7 @@ async function review(argv, { reviewKind }) {
   validateScope(options.scope);
   if (options["max-turns"] != null) optionalPositiveInteger(options["max-turns"], "--max-turns");
   if (options["max-budget-usd"] != null) optionalNumber(options["max-budget-usd"], "--max-budget-usd");
+  resolveClaudeExecutionOptions(options);
   const repoRoot = repoRootFromCwd();
   const config = loadConfig(repoRoot);
   const defaultMode = reviewKind === "adversarial" ? "adversarial" : undefined;
@@ -278,20 +301,26 @@ async function runReview({ repoRoot, config, mode, options, reviewId, reviewKind
     userIntent: options._.join(" "),
     config,
   });
-  const prompt = buildReviewPrompt({
+  const execution = resolveClaudeExecutionOptions(options);
+  const basePrompt = buildReviewPrompt({
     context,
     mode: reviewKind === "adversarial" ? "adversarial" : mode.prompt,
     codexContext,
   });
+  const prompt = applyWorkflowPrompt(basePrompt, execution);
   const maxBudgetUsd = optionalNumber(options["max-budget-usd"] ?? config.maxBudgetUsd ?? null, "--max-budget-usd");
   const maxTurns = optionalPositiveInteger(options["max-turns"] ?? mode.maxTurns ?? config.maxTurns, "--max-turns");
   const model = normalizeClaudeModel(options.model ?? mode.model ?? config.defaultModel);
+  const fallbackModel = execution.fallbackModel;
+  const effort = execution.effort;
   const id = reviewId || `${reviewKind === "adversarial" ? "adversarial" : "review"}-${new Date().toISOString().replace(/[:.]/g, "-")}`;
   const createdAt = new Date().toISOString();
   const reviewMarkdown = await runClaudeText({
     cwd: repoRoot,
     prompt,
     model,
+    effort,
+    fallbackModel,
     maxTurns,
     maxBudgetUsd,
     authMode: options["auth-mode"] ?? config.authMode,
@@ -306,6 +335,10 @@ async function runReview({ repoRoot, config, mode, options, reviewId, reviewKind
     status: "completed",
     target: context.target,
     model,
+    fallbackModel,
+    effort,
+    workflow: execution.workflow,
+    ultracode: execution.ultracode,
     maxBudgetUsd,
     maxTurns,
     codexContextFile: codexContext?.path ?? null,
@@ -360,6 +393,7 @@ async function implement(argv) {
   if (options["max-turns"] != null) optionalPositiveInteger(options["max-turns"], "--max-turns");
   if (options["max-budget-usd"] != null) optionalNumber(options["max-budget-usd"], "--max-budget-usd");
   if (options["timeout-ms"] != null) optionalPositiveInteger(options["timeout-ms"], "--timeout-ms");
+  const execution = resolveClaudeExecutionOptions(options);
   const task = options._.join(" ").trim();
   if (!task) {
     throw new Error("implement requires a task description.");
@@ -384,6 +418,8 @@ async function implement(argv) {
   runCommandChecked("git", ["worktree", "add", "-b", branch, worktreeDir, "HEAD"], { cwd: repoRoot });
 
   const model = normalizeClaudeModel(options.model ?? config.defaultModel ?? "sonnet");
+  const fallbackModel = execution.fallbackModel;
+  const effort = execution.effort;
   const maxTurns = optionalPositiveInteger(options["max-turns"] ?? config.maxTurns ?? 4, "--max-turns");
   const maxBudgetUsd = optionalNumber(options["max-budget-usd"] ?? config.maxBudgetUsd ?? null, "--max-budget-usd");
   const timeoutMs = optionalPositiveInteger(options["timeout-ms"] ?? null, "--timeout-ms");
@@ -392,7 +428,8 @@ async function implement(argv) {
   const allowRisky = options["allow-risky"] === true;
   const testCommands = optionList(options["test-cmd"]);
   const stream = options["no-stream"] !== true;
-  const prompt = buildImplementationPrompt({ task, repoRoot, worktreeDir, codexContext, allowPatterns, denyPatterns, allowRisky, testCommands });
+  const basePrompt = buildImplementationPrompt({ task, repoRoot, worktreeDir, codexContext, allowPatterns, denyPatterns, allowRisky, testCommands, workflow: execution.workflow, ultracode: execution.ultracode });
+  const prompt = applyWorkflowPrompt(basePrompt, execution);
   let claudeOutput = "";
   let status = "needs-codex-review";
   let error = null;
@@ -403,6 +440,8 @@ async function implement(argv) {
         cwd: worktreeDir,
         prompt,
         model,
+        effort,
+        fallbackModel,
         maxTurns,
         maxBudgetUsd,
         timeoutMs,
@@ -424,6 +463,8 @@ async function implement(argv) {
         cwd: worktreeDir,
         prompt,
         model,
+        effort,
+        fallbackModel,
         maxTurns,
         maxBudgetUsd,
         authMode: options["auth-mode"] ?? config.authMode,
@@ -463,6 +504,10 @@ async function implement(argv) {
     baseBranch,
     baseCommit,
     model,
+    fallbackModel,
+    effort,
+    workflow: execution.workflow,
+    ultracode: execution.ultracode,
     maxBudgetUsd,
     maxTurns,
     stream,
@@ -668,6 +713,9 @@ async function implementReject(argv) {
 
 async function verify(argv) {
   const options = parseArgs(argv);
+  if (options["max-turns"] != null) optionalPositiveInteger(options["max-turns"], "--max-turns");
+  if (options["max-budget-usd"] != null) optionalNumber(options["max-budget-usd"], "--max-budget-usd");
+  const execution = resolveClaudeExecutionOptions(options);
   const repoRoot = repoRootFromCwd();
   const config = loadConfig(repoRoot);
   const selected = resolveReview(repoRoot, options["review-id"] || options._[0]);
@@ -693,11 +741,15 @@ async function verify(argv) {
     config,
   });
   const codexContext = readOptionalCodexContext(repoRoot, options, config);
-  const prompt = buildVerificationPrompt({ review: reviewMarkdown, decisions, context, codexContext });
+  const basePrompt = buildVerificationPrompt({ review: reviewMarkdown, decisions, context, codexContext });
+  const prompt = applyWorkflowPrompt(basePrompt, execution);
+  const model = normalizeClaudeModel(options.model ?? mode.model);
   const verificationMarkdown = await runClaudeText({
     cwd: repoRoot,
     prompt,
-    model: normalizeClaudeModel(options.model ?? mode.model),
+    model,
+    effort: execution.effort,
+    fallbackModel: execution.fallbackModel,
     maxTurns: optionalPositiveInteger(options["max-turns"] ?? mode.maxTurns, "--max-turns"),
     maxBudgetUsd: optionalNumber(options["max-budget-usd"] ?? config.maxBudgetUsd ?? null, "--max-budget-usd"),
     authMode: options["auth-mode"] ?? config.authMode,
@@ -705,6 +757,14 @@ async function verify(argv) {
   const artifacts = {
     "verification.md": verificationMarkdown,
     "raw-verification-output.txt": verificationMarkdown,
+    "verification-summary.json": {
+      reviewId: selected.id,
+      model,
+      fallbackModel: execution.fallbackModel,
+      effort: execution.effort,
+      workflow: execution.workflow,
+      ultracode: execution.ultracode,
+    },
   };
   if (codexContext) {
     artifacts["verification-codex-context.md"] = codexContext.content;
@@ -808,13 +868,14 @@ function implementRunDir(repoRoot, runId) {
   return path.join(implementRunRoot(repoRoot), safeId(runId));
 }
 
-function buildImplementationPrompt({ task, repoRoot, worktreeDir, codexContext = null, allowPatterns = [], denyPatterns = [], allowRisky = false, testCommands = [] }) {
+function buildImplementationPrompt({ task, repoRoot, worktreeDir, codexContext = null, allowPatterns = [], denyPatterns = [], allowRisky = false, testCommands = [], workflow = false, ultracode = false }) {
   return [
     "<role>",
     "You are Claude Code implementing a change under Codex supervision.",
     "You may edit files only inside the supplied disposable git worktree.",
     "Do not stage, commit, push, create branches, delete the worktree, install packages, or run shell commands.",
     "Codex is the reviewer and merge gate. Codex will inspect the diff, run tests, and decide accept or reject.",
+    workflow ? `Dynamic workflow requested: ${ultracode ? "ultracode" : "single workflow"}. Any workflow subagents must obey the same disposable-worktree, tool, and path-scope limits.` : null,
     "</role>",
     "",
     "<task>",
